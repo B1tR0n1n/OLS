@@ -28,6 +28,11 @@ if [[ "$mode" == "auto" ]]; then
     if [[ -f "$PWD/docker/checkpoints/fusion.pt" && -f "$PWD/docker/checkpoints/temporal.pt" ]]; then mode=real; else mode=stub; fi
 fi
 cp -f console/lab/topology.yaml adapters/topologies/00-lab.yaml 2>/dev/null || true
+# a fresh checkout has no built UI (dist is gitignored); use the image's build
+if [[ ! -f console/ui/dist/index.html && -f "$APP/console/ui/dist/index.html" ]]; then
+    mkdir -p console/ui/dist && cp -r "$APP/console/ui/dist/." console/ui/dist/
+    echo "== UI: using the image's build (no console/ui/dist in the checkout)"
+fi
 
 pids=()
 run() { echo "== $1"; shift; "$@" & pids+=($!); }
