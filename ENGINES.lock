@@ -1,4 +1,4 @@
 # The engine commits this tree carries (tools/sync.sh refreshes both and rewrites this file).
 overlord  https://github.com/B1tR0n1n/overlord  1f0e3d2877805f970145d02645012f55d92549ee  2026-09-22
 cannot delete non-empty directory: pillar1/checkpoints
-sable  https://github.com/B1tR0n1n/sable  0fb32e4173795fb06933de0db02221e359a0d4c5  2026-09-22
+sable  https://github.com/B1tR0n1n/sable  cddbe3ced3821f04967ae1e7283679b6fb7166c0  2026-09-22
