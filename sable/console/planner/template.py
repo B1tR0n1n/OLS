@@ -20,6 +20,11 @@ class _Unresolvable(Exception):
     pass
 
 
+def _window_for(action) -> int:
+    """The catalog may pin an action's verification window; else the planner default."""
+    return VERIFICATION_WINDOW_S if action.verification_window_s is None else int(action.verification_window_s)
+
+
 class TemplatePlanner:
     def __init__(self, catalog: Catalog, topology: Topology, service_map: Optional[dict[str, str]] = None,
                  golden: Optional[dict[str, dict[str, str]]] = None, disabled: Iterable[str] = ()):
@@ -62,13 +67,17 @@ class TemplatePlanner:
             return g[source[len("golden_"):]]
         raise CatalogError(f"template param source {source!r} is not known")
 
-    def _pick(self, template: Template, node_id: str) -> tuple[Template, dict[str, str]]:
+    def _pick(self, template: Template, node_id: str,
+              exclude: Iterable[str] = ()) -> tuple[Template, dict[str, str]]:
+        exclude = set(exclude)
         t: Optional[Template] = template
         tried = []
         while t is not None:
             try:
                 if t.action_id in self.disabled:
                     raise _Unresolvable(f"action {t.action_id} is disabled")
+                if t.action_id in exclude:
+                    raise _Unresolvable(f"action {t.action_id} was already tried for this finding")
                 return t, {k: self._resolve(src, node_id) for k, src in t.params.items()}
             except _Unresolvable as e:
                 tried.append(f"{t.template_id}: {e}")
@@ -89,9 +98,11 @@ class TemplatePlanner:
             raise NoTemplate(f"no template for ({ct}, {rc.state})")
         return t
 
-    def plan(self, finding: Finding) -> Plan:
+    def plan(self, finding: Finding, exclude_actions: Iterable[str] = ()) -> Plan:
+        """`exclude_actions`: catalog actions a previous attempt on this finding
+        already executed without the fix holding; the template chain skips them."""
         rc = finding.root_cause
-        template, params = self._pick(self.template_for(finding), rc.node_id)
+        template, params = self._pick(self.template_for(finding), rc.node_id, exclude_actions)
         action = self.catalog.get(template.action_id)
         step = Step(action_id=action.action_id, target_node=rc.node_id, params=params,
                     reversibility=action.reversibility,
@@ -101,7 +112,7 @@ class TemplatePlanner:
         nodes = expected_blast_radius([rc.node_id], self.topology)
         plan = Plan(finding_id=finding.id, steps=[step],
                     blast_radius=BlastRadius(nodes=nodes, count=len(nodes)),
-                    verification=Verification(predicate=action.verification, window_s=VERIFICATION_WINDOW_S),
+                    verification=Verification(predicate=action.verification, window_s=_window_for(action)),
                     planner=PlannerProvenance(kind="template", template_id=template.template_id))
         # the template planner is not trusted either: its output goes through the same gate
         return validate_plan(plan.model_dump(mode="json"), self.catalog, finding, self.topology)

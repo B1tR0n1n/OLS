@@ -28,12 +28,20 @@ LAB_EDGES = [{"source": "app", "target": "dns", "type": "DNS_DEPENDENCY", "criti
 IDX = {n["id"]: i for i, n in enumerate(LAB_NODES)}
 
 
-def tick(states, conf=0.9):
-    return {"cycle": 5, "source": "live", "avg_confidence": conf,
-            "nodes": [{"id": i, "state": states.get(n["id"], "healthy"), "state_idx": 0, "confidence": conf,
-                       "probs": {"healthy": 0.05, "degraded": 0.05, "failed": 0.85, "unreachable": 0.03, "oscillating": 0.02}
-                       if states.get(n["id"]) else {"healthy": conf, "degraded": 0.05, "failed": 0.02, "unreachable": 0.02, "oscillating": 0.01},
-                       "trend": "stable"} for i, n in enumerate(LAB_NODES)]}
+STATES = ["healthy", "degraded", "failed", "unreachable", "oscillating"]
+
+
+def tick(states, conf=0.9, truth=None):
+    """`truth` ({node: state}, healthy by default) attaches the scorer's ground
+    truth the way the live path does; None = a tick without telemetry."""
+    t = {"cycle": 5, "source": "live", "avg_confidence": conf,
+         "nodes": [{"id": i, "state": states.get(n["id"], "healthy"), "state_idx": 0, "confidence": conf,
+                    "probs": {"healthy": 0.05, "degraded": 0.05, "failed": 0.85, "unreachable": 0.03, "oscillating": 0.02}
+                    if states.get(n["id"]) else {"healthy": conf, "degraded": 0.05, "failed": 0.02, "unreachable": 0.02, "oscillating": 0.01},
+                    "trend": "stable"} for i, n in enumerate(LAB_NODES)]}
+    if truth is not None:
+        t["ground_truth"] = [STATES.index(truth.get(n["id"], "healthy")) for n in LAB_NODES]
+    return t
 
 
 def recs(root, state="failed"):
@@ -60,6 +68,10 @@ class FakeSable:
 
     def recommendations(self):
         return self.recs
+
+    def node(self, idx):
+        """SABLE's /api/node/{idx}: a trajectory without `truth` (no scorer)."""
+        return {"node_id": idx, "current_state": "healthy", "trajectory": [{"cycle": 5, "prediction": "healthy"}]}
 
     def get(self, path):
         if path == "/api/nemotron/status":
@@ -95,9 +107,9 @@ class Overlord(FakeClient):
 
 @pytest.fixture
 def world(tmp_path):
-    def make(policy=None, lab=False, sleep_scale=0.0):
+    def make(policy=None, lab=False, sleep_scale=0.0, **cfg_overrides):
         cfg = Config(data_dir=tmp_path / "data", lab_dir=tmp_path / "lab", lab_enabled=lab,
-                     verify_stale_after_s=120)
+                     verify_stale_after_s=120, **cfg_overrides)
         sable, ov = FakeSable(), Overlord()
         loop = Loop(cfg, sable, ov, policy=policy or Policy.load(), sleep=lambda s: time.sleep(s * sleep_scale))
         loop.verifier.max_wait_s = 5

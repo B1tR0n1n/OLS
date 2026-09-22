@@ -56,33 +56,37 @@ C_BOLD = "\033[1m"
 
 # Same component type mapping as shared_latent_space fusion data generator
 COMP_TYPE_MAP = {
-    "ComponentType.CORE_SWITCH": NODE_TYPES["router"],
-    "ComponentType.ACCESS_SWITCH": NODE_TYPES["switch"],
-    "ComponentType.FIREWALL": NODE_TYPES["router"],
-    "ComponentType.ROUTER": NODE_TYPES["router"],
-    "ComponentType.LOAD_BALANCER": NODE_TYPES["switch"],
-    "ComponentType.SERVER_PHYSICAL": NODE_TYPES["server"],
-    "ComponentType.SERVER_VIRTUAL": NODE_TYPES["server"],
-    "ComponentType.HYPERVISOR": NODE_TYPES["server"],
-    "ComponentType.STORAGE_ARRAY": NODE_TYPES["storage"],
-    "ComponentType.STORAGE_TARGET": NODE_TYPES["storage"],
-    "ComponentType.VDI_BROKER": NODE_TYPES["service"],
-    "ComponentType.VDI_HOST": NODE_TYPES["server"],
-    "ComponentType.DNS_SERVER": NODE_TYPES["service"],
-    "ComponentType.DHCP_SERVER": NODE_TYPES["service"],
-    "ComponentType.DOMAIN_CONTROLLER": NODE_TYPES["service"],
-    "ComponentType.CERTIFICATE_AUTHORITY": NODE_TYPES["service"],
-    "ComponentType.MONITORING_SERVER": NODE_TYPES["service"],
-    "ComponentType.WAN_LINK": NODE_TYPES["gateway"],
-    "ComponentType.INTERNET_GATEWAY": NODE_TYPES["gateway"],
-    "ComponentType.APPLICATION_SERVICE": NODE_TYPES["server"],
+    "CORE_SWITCH": NODE_TYPES["router"],
+    "ACCESS_SWITCH": NODE_TYPES["switch"],
+    "FIREWALL": NODE_TYPES["router"],
+    "ROUTER": NODE_TYPES["router"],
+    "LOAD_BALANCER": NODE_TYPES["switch"],
+    "SERVER_PHYSICAL": NODE_TYPES["server"],
+    "SERVER_VIRTUAL": NODE_TYPES["server"],
+    "HYPERVISOR": NODE_TYPES["server"],
+    "STORAGE_ARRAY": NODE_TYPES["storage"],
+    "STORAGE_TARGET": NODE_TYPES["storage"],
+    "VDI_BROKER": NODE_TYPES["service"],
+    "VDI_HOST": NODE_TYPES["server"],
+    "DNS_SERVER": NODE_TYPES["service"],
+    "DHCP_SERVER": NODE_TYPES["service"],
+    "DOMAIN_CONTROLLER": NODE_TYPES["service"],
+    "CERTIFICATE_AUTHORITY": NODE_TYPES["service"],
+    "MONITORING_SERVER": NODE_TYPES["service"],
+    "WAN_LINK": NODE_TYPES["gateway"],
+    "INTERNET_GATEWAY": NODE_TYPES["gateway"],
+    "APPLICATION_SERVICE": NODE_TYPES["server"],
 }
 
 DEP_TYPE_MAP = {
-    "DependencyType.HARD": EDGE_TYPES["backbone"],
-    "DependencyType.SOFT": EDGE_TYPES["access"],
-    "DependencyType.SERVICE": EDGE_TYPES["service_dep"],
-    "DependencyType.RESOURCE": EDGE_TYPES["storage_dep"],
+    "NETWORK_PATH": EDGE_TYPES["backbone"],
+    "HOSTING_DEPENDENCY": EDGE_TYPES["access"],
+    "STORAGE_DEPENDENCY": EDGE_TYPES["storage_dep"],
+    "SERVICE_DEPENDENCY": EDGE_TYPES["service_dep"],
+    "DNS_DEPENDENCY": EDGE_TYPES["service_dep"],
+    "AUTHENTICATION_DEPENDENCY": EDGE_TYPES["service_dep"],
+    "REPLICATION_DEPENDENCY": EDGE_TYPES["service_dep"],
+    "MONITORING_DEPENDENCY": EDGE_TYPES["management"],
 }
 
 MAX_NODES = 40
@@ -122,7 +126,7 @@ def encode_gnn_features(graph, components, component_ids, gnn, device, rng=None)
         for dep_id in comp.dependencies_in:
             ti = cid_to_idx.get(dep_id)
             if ti is not None:
-                dep = graph.get_dependency(comp.id, dep_id)
+                dep = graph.get_dependency(dep_id, comp.id)
                 if dep:
                     etype = DEP_TYPE_MAP.get(str(dep.type), EDGE_TYPES["unknown"])
                     feat = np.zeros(INFRA_EDGE_FEAT_DIM, dtype=np.float32)
@@ -390,7 +394,8 @@ def generate_temporal_sequences(count: int, max_ticks: int = 12,
 
             gnn_feat = encode_gnn_features(graph, components, component_ids, gnn, device, rng=rng)
             pomdp_feat = encode_pomdp_features(belief, component_ids)
-            mamba_raw = encode_system_state(graph, component_ids)
+            # Observation-based Mamba (audit fix #1): belief, not true state.
+            mamba_raw = encode_system_state(graph, component_ids, belief=belief)
 
             gt_states = [STATE_MAP.get(graph.get_component(cid).state, 0) for cid in component_ids]
             gt_states = _detect_oscillation_and_store_history(

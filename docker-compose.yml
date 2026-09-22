@@ -26,6 +26,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CONSOLE_POLICY: ${CONSOLE_POLICY:-}
       CONSOLE_DISABLE_ACTIONS: ${CONSOLE_DISABLE_ACTIONS:-}
+      CONSOLE_TOKEN: ${CONSOLE_TOKEN:-}
+      SABLE_TOKEN: ${SABLE_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${OLS_DIR}:${OLS_DIR}

@@ -139,7 +139,26 @@ def train(epochs=100, lr=0.001, device="cuda"):
                 ])
                 loss_link = F.binary_cross_entropy_with_logits(link_logits, link_targets)
 
-                loss = loss_state + 0.3 * loss_link
+                # Reachability / propagation loss: pick a seed that has
+                # dependents, then predict which nodes a failure at the seed
+                # reaches (edge (s,t) => s depends on t => t affects s).
+                # Vectorised fixpoint on GPU: M[s,t]=1 for edge s->t, propagate
+                # r = (r + M@r > 0) until it stops growing.
+                loss_reach = torch.tensor(0.0, device=device)
+                if ei.size(1) > 0:
+                    tgt_nodes = ei[1].unique()
+                    seed = int(tgt_nodes[torch.randint(len(tgt_nodes), (1,))].item())
+                    M = torch.zeros(nn_, nn_, device=device)
+                    M[ei[0], ei[1]] = 1.0
+                    r = torch.zeros(nn_, device=device)
+                    r[seed] = 1.0
+                    for _ in range(8):  # fixed depth, no host sync
+                        r = torch.clamp(r + (M @ r), max=1.0)
+                    r = (r > 0).float()
+                    reach_logits = model.predict_reachability(node_emb, seed)
+                    loss_reach = F.binary_cross_entropy_with_logits(reach_logits, r)
+
+                loss = loss_state + 0.3 * loss_link + 0.3 * loss_reach
                 total_loss = total_loss + loss * nn_
                 total_nodes += nn_
 
@@ -280,5 +299,9 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
     train(args.epochs, args.lr, args.device)

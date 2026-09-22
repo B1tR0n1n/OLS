@@ -9,7 +9,7 @@ OVERLORD and SABLE in one repository, one image, one command.
 
 ## Run
 
-Needs Docker (Docker Desktop with WSL integration is fine) and `make`. Keep the checkout on the Linux filesystem, not `/mnt/c`.
+Needs Docker with the Compose v2 plugin (`docker compose version` must work on the host too: the fault scripts and `make fault` call it outside the container), and `make`. Keep the checkout on the Linux filesystem, not `/mnt/c`.
 
 ```bash
 git clone https://github.com/B1tR0n1n/OLS.git ~/projects/OLS
@@ -27,7 +27,7 @@ make down
 
 ## SABLE's weights
 
-The trained checkpoints (`sable/docker/checkpoints/fusion.pt`, `temporal.pt`) are not in any repo. Drop them in that directory and the container runs the real engine (`SABLE_MODE=auto` picks it up at start). Without them the container runs the stand-in (`sable/console/lab/sable_stub.py`): same API, same tick and recommendation shapes, root cause = the node that left healthy first, and every response is labelled `engine: stub` so nothing can be mistaken for a model verdict.
+The trained checkpoints (`sable/docker/checkpoints/fusion.pt`, `temporal.pt`, optional `lora_adapter.pt`) and the Pillar-1 GNN (`sable/pillar1/checkpoints/best_model.pt`, which the live monitor needs to encode telemetry the way the fusion model was trained) are not in any repo. Drop them in those directories and the container runs the real engine (`SABLE_MODE=auto` picks it up at start). Without them the container runs the stand-in (`sable/console/lab/sable_stub.py`): same API, same tick and recommendation shapes, root cause = the node that left healthy first, and every response is labelled `engine: stub` so nothing can be mistaken for a model verdict.
 
 ## Knobs (environment, read by `docker compose`)
 
@@ -37,6 +37,8 @@ The trained checkpoints (`sable/docker/checkpoints/fusion.pt`, `temporal.pt`) ar
 | `SABLE_MODE` | `auto` (default), `real`, `stub` |
 | `CONSOLE_POLICY` | path to a policy file (default: the shipped default-deny) |
 | `CONSOLE_DISABLE_ACTIONS` | comma-separated catalog actions to refuse |
+| `CONSOLE_TOKEN` | when set, every mutating console route needs `Authorization: Bearer <token>`; the UI takes it from `#token=` once and keeps it in localStorage |
+| `SABLE_TOKEN` | when set, SABLE's own state-changing routes need `X-SABLE-Token`; the live monitor sends it |
 
 ## Developing
 

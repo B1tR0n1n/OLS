@@ -4,6 +4,7 @@ Wraps the three-pillar fusion + temporal chain into one clean interface.
 """
 
 import sys
+import time
 from pathlib import Path
 
 import torch
@@ -57,24 +58,52 @@ class SableEngine:
         self.history = []  # per-tick prediction history for the timeline
         self.MAX_HISTORY = 1000
         self.lora_active = False
+        self.model_healthy = False  # True only after real weights are loaded
 
     def load_checkpoints(self, checkpoint_dir: str = "checkpoints"):
-        """Load fusion + temporal chain + optional LoRA adapter weights."""
+        """Load fusion + temporal chain + optional LoRA adapter weights.
+
+        Raises FileNotFoundError if a REQUIRED checkpoint (fusion, temporal) is
+        missing. Without this the engine would run on freshly-initialized random
+        weights and still return confident-looking predictions — fabricated
+        results with no error, exactly the failure the audit warns against.
+        """
         ckpt_dir = Path(checkpoint_dir)
 
-        # Step 1: Build base fusion
+        # Step 1: Build base fusion (REQUIRED)
         base = SharpRoutedFusion(mamba_dim=NODE_FEAT_DIM)
         fusion_path = ckpt_dir / "fusion.pt"
-        if fusion_path.exists():
-            ckpt = torch.load(fusion_path, weights_only=False, map_location=self.device)
-            base.load_state_dict(ckpt["model_state_dict"])
+        if not fusion_path.exists():
+            raise FileNotFoundError(
+                f"Required fusion checkpoint missing: {fusion_path}. Refusing to "
+                f"serve random-weight (fabricated) predictions."
+            )
+        ckpt = torch.load(fusion_path, weights_only=False, map_location=self.device)
+        base.load_state_dict(ckpt["model_state_dict"])
 
-        # Step 2: Wrap with temporal chain
+        # Step 2: Wrap with temporal chain (REQUIRED)
         model = TemporalChainFusion(base)
         temporal_path = ckpt_dir / "temporal.pt"
-        if temporal_path.exists():
-            ckpt = torch.load(temporal_path, weights_only=False, map_location=self.device)
-            model.load_state_dict(ckpt["model_state_dict"], strict=False)
+        if not temporal_path.exists():
+            raise FileNotFoundError(
+                f"Required temporal checkpoint missing: {temporal_path}. Refusing "
+                f"to serve random-weight (fabricated) predictions."
+            )
+        ckpt = torch.load(temporal_path, weights_only=False, map_location=self.device)
+        # Load compatible keys only - base_fusion router may have changed shape
+        tc_state = ckpt["model_state_dict"]
+        model_state = model.state_dict()
+        loaded_tc = skipped_tc = 0
+        for k, v in tc_state.items():
+            if k in model_state and model_state[k].shape == v.shape:
+                model_state[k] = v
+                loaded_tc += 1
+            else:
+                skipped_tc += 1
+        model.load_state_dict(model_state)
+        if skipped_tc:
+            print(f"  temporal chain: loaded {loaded_tc} keys, skipped {skipped_tc} "
+                  f"(shape/name mismatch) — check architecture drift")
 
         # Step 3: Apply LoRA to the FULL model (fusion + temporal chain)
         lora_path = ckpt_dir / "lora_adapter.pt"
@@ -99,6 +128,7 @@ class SableEngine:
 
         model.eval().to(self.device)
         self.model = model
+        self.model_healthy = True
         return True
 
     def toggle_lora(self, enabled: bool):
@@ -135,6 +165,7 @@ class SableEngine:
             dict with per-node predictions, confidence, routing, transitions.
             When mc_samples > 0, mc_agreement and mc_variance fields are added.
         """
+        t0 = time.time()
         gnn = gnn.to(self.device)
         pomdp = pomdp.to(self.device)
         mamba = mamba.to(self.device)
@@ -147,6 +178,42 @@ class SableEngine:
         preds = probs.argmax(dim=-1)  # (N,)
         transition = torch.softmax(out["transition"][0], dim=-1)  # (N, 3)
         route_weights = out["route_weights"][0]  # (N, 4)
+
+        # Pillar feed metrics: how much each pillar contributes to the router decision
+        # 1. Logit magnitude: L2 norm of each expert's output logits (signal strength)
+        # 2. Expert confidence: max softmax probability (how sure each expert is)
+        # 3. Soft routing: softmax of router logits before argmax (how close the decision was)
+        l_gnn = out["l_gnn"][0]       # (N, N_STATES)
+        l_pomdp = out["l_pomdp"][0]
+        l_mamba = out["l_mamba"][0]
+        l_fusion = out["l_fusion"][0]
+        route_logits = out["route_logits"][0]  # (N, 4)
+
+        # Pillar views - what each reasoning pillar sees, per node.
+        # Router/fusion run in the background. This is for the operator.
+        gnn_probs = torch.softmax(l_gnn, dim=-1)   # (N, N_STATES)
+        pomdp_probs = torch.softmax(l_pomdp, dim=-1)
+        mamba_probs = torch.softmax(l_mamba, dim=-1)
+
+        pillar_views = []
+        for i in range(self.n_nodes):
+            pomdp_raw = pomdp[0, i].cpu().tolist()
+            pillar_views.append({
+                "gnn_state": STATE_NAMES[int(gnn_probs[i].argmax().item())],
+                "gnn_confidence": round(float(gnn_probs[i].max().item()), 4),
+                "pomdp_belief": {STATE_NAMES[c]: round(pomdp_raw[c], 4) for c in range(min(4, len(pomdp_raw)))},
+                "pomdp_confidence": round(float(pomdp_raw[4]) if len(pomdp_raw) > 4 else 0, 4),
+                "pomdp_obs_age": round(float(pomdp_raw[5]) if len(pomdp_raw) > 5 else 0, 4),
+                "pomdp_contradiction": round(float(pomdp_raw[6]) if len(pomdp_raw) > 6 else 0, 4),
+                "trend": ["improving", "stable", "deteriorating"][transition[i].argmax().item()],
+                "trend_probs": {
+                    "improving": round(float(transition[i, 0].item()), 4),
+                    "stable": round(float(transition[i, 1].item()), 4),
+                    "deteriorating": round(float(transition[i, 2].item()), 4),
+                },
+            })
+
+        pillar_feed = {"pillar_views": pillar_views}
 
         # Confidence: either standard (max softmax) or MC dropout (variance-based)
         mc_meta = None
@@ -217,6 +284,7 @@ class SableEngine:
                 "value": float(confidence.max().item()),
             },
             "accuracy": accuracy,
+            "pillar_feed": pillar_feed,
         }
 
         if mc_meta:
@@ -224,11 +292,20 @@ class SableEngine:
             tick_record["mc_avg_agreement"] = float(mc_meta["agreement"].mean().item())
             tick_record["mc_avg_variance"] = float(mc_meta["variance"].mean().item())
 
-        # Store history
+        inference_ms = round((time.time() - t0) * 1000, 2)
+        tick_record["inference_ms"] = inference_ms
+
+        # Store history (includes data needed by Grafana datasource)
         self.history.append({
             "cycle": self.cycle,
             "predictions": preds.cpu().tolist(),
             "ground_truth": ground_truth.tolist() if ground_truth is not None else None,
+            "confidences": confidence.cpu().tolist(),
+            "route_weights": route_weights.cpu().tolist(),
+            "pillar_feed": pillar_feed,
+            "accuracy": accuracy,
+            "inference_ms": inference_ms,
+            "timestamp": time.time(),
         })
         if len(self.history) > self.MAX_HISTORY:
             self.history = self.history[-self.MAX_HISTORY:]
@@ -429,6 +506,29 @@ class SableEngine:
             })
             priority += 1
 
+        # Root cause: the earliest hard failure. Unreachable counts — a killed
+        # primary is unreachable to monitoring, not "failed", and it is still
+        # the thing to fix (lab run 2026-09-22: kill_primary produced no root).
+        # Ties at the same tick prefer failed over unreachable.
+        # With no hard failure at all, the earliest degraded/oscillating node is
+        # the root cause: a config-corrupted service reads as degraded (scorer)
+        # or oscillating (model) and never as failed, and the console has a
+        # template for exactly that (golden-config restore). Transient blips
+        # that open a finding this way resolve on their own in the console.
+        failed_ids = {n["node"] for n in failed}
+        degraded_ids = {n["node"] for n in degraded}
+        hard = sorted(failed + unreachable,
+                      key=lambda n: (n["first_affected_tick"], 0 if n["node"] in failed_ids else 1))
+        soft = sorted(degraded + oscillating,
+                      key=lambda n: (n["first_affected_tick"], 0 if n["node"] in degraded_ids else 1))
+        root = hard[0] if hard else (soft[0] if soft else None)
+        if root is None:
+            root_state = None
+        elif hard:
+            root_state = "failed" if root["node"] in failed_ids else "unreachable"
+        else:
+            root_state = "degraded" if root["node"] in degraded_ids else "oscillating"
+
         # Impact summary
         total_affected = len(failed) + len(unreachable) + len(degraded) + len(oscillating)
         summary_parts = []
@@ -442,14 +542,16 @@ class SableEngine:
         else:
             summary = (f"{total_affected}/{self.n_nodes} nodes affected: "
                       + ", ".join(summary_parts) + ". "
-                      + (f"Root cause likely Node {failed[0]['node']:02d} (first failure at tick {failed[0]['first_affected_tick']})."
-                         if failed else "No hard failures — monitor degraded nodes."))
+                      + (("" if hard else "No hard failures. ")
+                         + f"Root cause likely Node {root['node']:02d} "
+                         f"({root_state}, first affected at tick {root['first_affected_tick']})."))
 
         return {
             "summary": summary,
             "total_affected": total_affected,
             "actions": actions,
-            "root_cause": failed[0]["node"] if failed else None,
+            "root_cause": root["node"] if root else None,
+            "root_cause_state": root_state,
         }
 
     def get_summary(self) -> dict:

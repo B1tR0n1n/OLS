@@ -68,7 +68,18 @@ def load_gnn(checkpoint_path: str, device: str = "cuda"):
         edge_dim=mc["edge_dim"], num_layers=mc["num_layers"],
         heads=mc["heads"], dropout=mc["dropout"],
     ).to(device)
-    model.load_state_dict(ckpt["model_state_dict"])
+    # Load compatible keys only — an auxiliary head (link_type_head) drifted
+    # from 6→7 link types after this checkpoint was trained. The GAT backbone
+    # (used for structural embeddings) loads fine; the mismatched aux head is
+    # skipped. strict=False + shape filter.
+    sd = ckpt["model_state_dict"]
+    msd = model.state_dict()
+    compatible = {k: v for k, v in sd.items() if k in msd and msd[k].shape == v.shape}
+    skipped = [k for k in sd if k not in compatible]
+    model.load_state_dict(compatible, strict=False)
+    if skipped:
+        print(f"    (GNN: loaded {len(compatible)}/{len(sd)} tensors; "
+              f"skipped shape-mismatched: {', '.join(sorted(set(k.split('.')[0] for k in skipped)))})")
     model.eval()
     return model
 
@@ -208,21 +219,21 @@ class SABLEOrchestrator:
         predicted_affected = []
 
         if self.mamba is not None:
-            # Encode current state for Mamba
-            state_t0 = encode_system_state(self.graph, self.component_ids)
-            # Encode post-initial-observation state
-            state_t1 = state_t0.copy()  # Will be modified by observations
+            from pomcp import BeliefState
+
+            # Encode from the fog-of-war belief, NOT the true graph state.
+            # t0 = prior (nothing observed yet); t1 = prior + operator's partial
+            # observations folded in. This is audit fix #1: the Mamba pillar must
+            # infer from what monitoring sees, never read true state off the graph.
+            belief_t0 = BeliefState(self.component_ids)
+            belief_t1 = BeliefState(self.component_ids)
             for obs in operator_view.get("observations", []):
                 cid = obs["component_id"]
                 if cid in self.component_ids:
-                    idx = self.component_ids.index(cid)
-                    obs_state = obs["observed_state"]
-                    # Update health in state vector based on observation
-                    base = idx * NODE_FEAT_DIM
-                    if obs_state == "failed":
-                        state_t1[base] = 0.0  # health
-                    elif obs_state == "degraded":
-                        state_t1[base] = 0.4
+                    belief_t1.update_from_observation(cid, obs["observed_state"])
+
+            state_t0 = encode_system_state(self.graph, self.component_ids, belief=belief_t0)
+            state_t1 = encode_system_state(self.graph, self.component_ids, belief=belief_t1)
 
             # Build input tensor
             max_nodes = 40

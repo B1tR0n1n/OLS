@@ -126,10 +126,11 @@ def apply_lora(model, rank: int = 8, alpha: float = 16.0):
     else:
         base = model
 
-    # Expert heads + router
+    # Expert heads only - router is EXCLUDED to preserve balanced routing
+    # learned in Stage 2. LoRA adapts what experts predict, not who the
+    # router trusts. This prevents routing collapse from LoRA magnitude drift.
     for name in ["gnn_expert", "pomdp_expert", "mamba_expert", "fusion_expert"]:
         _wrap_sequential(getattr(base, name))
-    _wrap_sequential(base.router)
 
     # Temporal chain components (if present)
     if hasattr(model, 'context_mixer'):
@@ -210,8 +211,17 @@ def train_lora(
     if temporal_path.exists():
         model = TemporalChainFusion(base_fusion)
         tc_ckpt = torch.load(str(temporal_path), weights_only=False, map_location=device)
-        model.load_state_dict(tc_ckpt["model_state_dict"], strict=False)
-        print(f"  {C_TEXT}Temporal chain loaded - full model LoRA{C_RESET}")
+        # Load only temporal chain keys (context_mixer, revision_gate), skip base_fusion
+        # keys which may have changed shape (e.g. router input dim after adding temporal ctx)
+        tc_state = tc_ckpt["model_state_dict"]
+        model_state = model.state_dict()
+        loaded = 0
+        for k, v in tc_state.items():
+            if k in model_state and model_state[k].shape == v.shape:
+                model_state[k] = v
+                loaded += 1
+        model.load_state_dict(model_state)
+        print(f"  {C_TEXT}Temporal chain loaded ({loaded}/{len(tc_state)} compatible keys){C_RESET}")
     else:
         model = base_fusion
         print(f"  {C_TEXT}Fusion only (no temporal chain){C_RESET}")
@@ -233,12 +243,21 @@ def train_lora(
     # Load training data
     print(f"  {C_INFO}Loading training data...{C_RESET}")
     all_gnn, all_pomdp, all_mamba, all_gt = [], [], [], []
+    MAXN = 40  # pad node dim so scenarios of different sizes can concatenate
+
+    def _padN(t, fill=0.0):
+        if t.shape[1] >= MAXN:
+            return t[:, :MAXN]
+        shape = list(t.shape)
+        shape[1] = MAXN - t.shape[1]
+        return torch.cat([t, torch.full(shape, fill, dtype=t.dtype)], dim=1)
+
     for dp in data_paths:
         d = load_scenario_as_training_data(dp)
-        all_gnn.append(d["gnn"])
-        all_pomdp.append(d["pomdp"])
-        all_mamba.append(d["mamba"])
-        all_gt.append(d["states"])
+        all_gnn.append(_padN(d["gnn"]))
+        all_pomdp.append(_padN(d["pomdp"]))
+        all_mamba.append(_padN(d["mamba"]))
+        all_gt.append(_padN(d["states"], fill=-100))  # -100 = CrossEntropy ignore_index
         print(f"    {C_DIM}{d['name']}: {d['n_ticks']}t x {d['n_nodes']}n{C_RESET}")
 
     # Concatenate along time dimension
@@ -266,12 +285,16 @@ def train_lora(
     # Keep scenarios separate for sequential temporal processing
     # Split scenarios: 75% train, 25% val
     n_scenarios = len(all_gnn)
+    if n_scenarios < 2:
+        raise ValueError(
+            f"LoRA fine-tune needs >=2 scenarios for a disjoint held-out split; "
+            f"got {n_scenarios}. With one scenario the 'held-out' macro-F1 is "
+            f"actually train accuracy — pass more --data files."
+        )
     scenario_perm = torch.randperm(n_scenarios)
     n_train_sc = max(1, int(n_scenarios * 0.75))
     train_sc = scenario_perm[:n_train_sc].tolist()
     val_sc = scenario_perm[n_train_sc:].tolist()
-    if not val_sc:
-        val_sc = train_sc[-1:]  # At least 1 val scenario
 
     is_temporal = hasattr(model, 'context_mixer')
 
@@ -319,7 +342,11 @@ def train_lora(
 
                     out = model(g, p, m, temporal_state=temporal_state)
                     logits = out["revised_logits"]  # (1, N, N_STATES)
-                    loss = loss_fn(logits.reshape(-1, N_STATES), y.reshape(-1))
+                    cls_loss = loss_fn(logits.reshape(-1, N_STATES), y.reshape(-1))
+                    # Entropy balance: prevent LoRA from collapsing routing
+                    rp = F.softmax(out["route_logits"], dim=-1).mean(dim=(0, 1))
+                    balance = -(rp * torch.log(rp + 1e-8)).sum()
+                    loss = cls_loss - 0.05 * balance
 
                     optimizer.zero_grad()
                     loss.backward()
@@ -348,7 +375,11 @@ def train_lora(
 
                     out = model(g, p, m)
                     logits = out["logits"]
-                    loss = loss_fn(logits.reshape(-1, N_STATES), y.reshape(-1))
+                    cls_loss = loss_fn(logits.reshape(-1, N_STATES), y.reshape(-1))
+                    # Entropy balance: prevent LoRA from collapsing routing
+                    rp = F.softmax(out["route_logits"], dim=-1).mean(dim=(0, 1))
+                    balance = -(rp * torch.log(rp + 1e-8)).sum()
+                    loss = cls_loss - 0.05 * balance
 
                     optimizer.zero_grad()
                     loss.backward()
@@ -455,7 +486,11 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--output", default=str(Path(__file__).parent / "checkpoints" / "lora_adapter.pt"))
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     train_lora(
         model_path=args.model,

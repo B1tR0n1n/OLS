@@ -1,0 +1,32 @@
+SABLE — Demo Kit
+================
+
+>>> index.html <<<   Double-click it. Opens in any browser. Offline. No install.
+
+This is the real SABLE engine dashboard, playing back honest (de-leaked) runs.
+  - Pick a scenario (top): monday_morning, silent_killer, slow_poison,
+    cascade_whiplash.
+  - Hit ▶ play (or step) to watch the incident unfold tick by tick.
+  - The node grid, class distribution, expert routing, confidence and the
+    live ACCURACY readout are all real model output — nothing inflated.
+  - Click any node to inspect its diagnostic trajectory.
+
+Honest numbers you'll see (and can cite) — all on the de-leaked, retrained stack:
+  - live accuracy tracks ~62-100% as an incident evolves (NOT a flat fake 96%)
+  - GNN 0.73 macro-F1 / routed fusion 0.65 / temporal chain 0.63 — measured
+    with the label-leak closed (the old GNN got "failed" for free from a leaked
+    health feature; now it's real structural reasoning)
+  - on SYNTHETIC scenarios the stack tracks incidents at ~76-96%; on REAL
+    server telemetry (SMD) it's ~57-68% — the honest real-world number
+  - LoRA adapter F1 0.326 (real) — the old build claimed 0.548, which was leaked
+  - ~7 ms per diagnosis on an RTX 5090
+
+Other files:
+  topology-view.html  — a single-screen topology diagram (observed vs SABLE-
+                        inferred hidden failures). Also double-click, offline.
+  serve.py + live.html — OPTIONAL interactive mode. On the workstation:
+                        `python3 serve.py` then open http://localhost:8760 to
+                        click nodes and run the live model on your own inputs.
+  RUN-OF-SHOW.md      — how to present it, including the audit-rebuild story.
+
+Every figure in this kit is measured on de-leaked data. Nothing is inflated.

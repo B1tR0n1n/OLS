@@ -39,32 +39,36 @@ R = "\033[0m"
 
 # Same maps as generate_fusion_data in shared_latent_space.py
 COMP_TYPE_MAP = {
-    "ComponentType.CORE_SWITCH": NODE_TYPES["router"],
-    "ComponentType.ACCESS_SWITCH": NODE_TYPES["switch"],
-    "ComponentType.FIREWALL": NODE_TYPES["router"],
-    "ComponentType.ROUTER": NODE_TYPES["router"],
-    "ComponentType.LOAD_BALANCER": NODE_TYPES["switch"],
-    "ComponentType.SERVER_PHYSICAL": NODE_TYPES["server"],
-    "ComponentType.SERVER_VIRTUAL": NODE_TYPES["server"],
-    "ComponentType.HYPERVISOR": NODE_TYPES["server"],
-    "ComponentType.STORAGE_ARRAY": NODE_TYPES["storage"],
-    "ComponentType.STORAGE_TARGET": NODE_TYPES["storage"],
-    "ComponentType.VDI_BROKER": NODE_TYPES["service"],
-    "ComponentType.VDI_HOST": NODE_TYPES["server"],
-    "ComponentType.DNS_SERVER": NODE_TYPES["service"],
-    "ComponentType.DHCP_SERVER": NODE_TYPES["service"],
-    "ComponentType.DOMAIN_CONTROLLER": NODE_TYPES["service"],
-    "ComponentType.CERTIFICATE_AUTHORITY": NODE_TYPES["service"],
-    "ComponentType.MONITORING_SERVER": NODE_TYPES["service"],
-    "ComponentType.WAN_LINK": NODE_TYPES["gateway"],
-    "ComponentType.INTERNET_GATEWAY": NODE_TYPES["gateway"],
-    "ComponentType.APPLICATION_SERVICE": NODE_TYPES["server"],
+    "CORE_SWITCH": NODE_TYPES["router"],
+    "ACCESS_SWITCH": NODE_TYPES["switch"],
+    "FIREWALL": NODE_TYPES["router"],
+    "ROUTER": NODE_TYPES["router"],
+    "LOAD_BALANCER": NODE_TYPES["switch"],
+    "SERVER_PHYSICAL": NODE_TYPES["server"],
+    "SERVER_VIRTUAL": NODE_TYPES["server"],
+    "HYPERVISOR": NODE_TYPES["server"],
+    "STORAGE_ARRAY": NODE_TYPES["storage"],
+    "STORAGE_TARGET": NODE_TYPES["storage"],
+    "VDI_BROKER": NODE_TYPES["service"],
+    "VDI_HOST": NODE_TYPES["server"],
+    "DNS_SERVER": NODE_TYPES["service"],
+    "DHCP_SERVER": NODE_TYPES["service"],
+    "DOMAIN_CONTROLLER": NODE_TYPES["service"],
+    "CERTIFICATE_AUTHORITY": NODE_TYPES["service"],
+    "MONITORING_SERVER": NODE_TYPES["service"],
+    "WAN_LINK": NODE_TYPES["gateway"],
+    "INTERNET_GATEWAY": NODE_TYPES["gateway"],
+    "APPLICATION_SERVICE": NODE_TYPES["server"],
 }
 DEP_TYPE_MAP = {
-    "DependencyType.HARD": EDGE_TYPES["backbone"],
-    "DependencyType.SOFT": EDGE_TYPES["access"],
-    "DependencyType.SERVICE": EDGE_TYPES["service_dep"],
-    "DependencyType.RESOURCE": EDGE_TYPES["storage_dep"],
+    "NETWORK_PATH": EDGE_TYPES["backbone"],
+    "HOSTING_DEPENDENCY": EDGE_TYPES["access"],
+    "STORAGE_DEPENDENCY": EDGE_TYPES["storage_dep"],
+    "SERVICE_DEPENDENCY": EDGE_TYPES["service_dep"],
+    "DNS_DEPENDENCY": EDGE_TYPES["service_dep"],
+    "AUTHENTICATION_DEPENDENCY": EDGE_TYPES["service_dep"],
+    "REPLICATION_DEPENDENCY": EDGE_TYPES["service_dep"],
+    "MONITORING_DEPENDENCY": EDGE_TYPES["management"],
 }
 
 
@@ -93,16 +97,25 @@ def encode_tick(graph, components, component_ids, gnn, device, rng, belief):
     n = len(component_ids)
     cid_to_idx = {cid: i for i, cid in enumerate(component_ids)}
 
-    # --- GNN: same path as generate_fusion_data lines 712-758 ---
+    # --- Partial observation (fog-of-war) — shared basis for all channels ---
+    fog = FogOfWar(monitoring_coverage=0.5, rng=SeededRandom(rng.randint(0, 2**31)))
+    operator_view = fog.generate_operator_view(SystemState(graph))
+    observed_ids = {o["component_id"] for o in operator_view.get("observations", [])}
+    for obs in operator_view.get("observations", []):
+        belief.update_from_observation(obs["component_id"], obs["observed_state"], 0.85)
+    belief.propagate_beliefs(graph)
+
+    # --- GNN: observation-gated health (audit fix #1) ---
     degrees = {comp.id: len(comp.dependencies_in) + len(comp.dependencies_out) for comp in components}
     max_deg = max(degrees.values()) if degrees else 1
 
     node_features = np.zeros((n, INFRA_NODE_FEAT_DIM), dtype=np.float32)
     for i, comp in enumerate(components):
+        health = float(comp.health) if comp.id in observed_ids else 0.5
         ntype = COMP_TYPE_MAP.get(str(comp.type), NODE_TYPES["unknown"])
         node_features[i, ntype] = 1.0
         node_features[i, N_NODE_TYPES] = degrees[comp.id] / max(max_deg, 1)
-        node_features[i, N_NODE_TYPES + 1] = comp.health
+        node_features[i, N_NODE_TYPES + 1] = health
     x = torch.tensor(node_features, dtype=torch.float32).to(device)
 
     sources, targets, edge_feats = [], [], []
@@ -111,7 +124,7 @@ def encode_tick(graph, components, component_ids, gnn, device, rng, belief):
         for dep_id in comp.dependencies_in:
             ti = cid_to_idx.get(dep_id)
             if ti is not None:
-                dep = graph.get_dependency(comp.id, dep_id)
+                dep = graph.get_dependency(dep_id, comp.id)
                 if dep:
                     etype = DEP_TYPE_MAP.get(str(dep.type), EDGE_TYPES["unknown"])
                     feat = np.zeros(INFRA_EDGE_FEAT_DIM, dtype=np.float32)
@@ -130,15 +143,7 @@ def encode_tick(graph, components, component_ids, gnn, device, rng, belief):
         else:
             gnn_out = emb[:, :GNN_DIM]
 
-    # --- POMDP: same path as generate_fusion_data lines 760-781 ---
-    fog = FogOfWar(monitoring_coverage=0.5, rng=SeededRandom(rng.randint(0, 2**31)))
-    state_obj = SystemState(graph)
-    operator_view = fog.generate_operator_view(state_obj)
-
-    for obs in operator_view.get("observations", []):
-        belief.update_from_observation(obs["component_id"], obs["observed_state"], 0.85)
-    belief.propagate_beliefs(graph)
-
+    # --- POMDP: belief computed once, above ---
     pomdp_out = torch.zeros(n, POMDP_DIM)
     for i, cid in enumerate(component_ids):
         b = belief.beliefs[cid]
@@ -147,8 +152,11 @@ def encode_tick(graph, components, component_ids, gnn, device, rng, belief):
         hub = min(len(graph.get_dependents(cid)) / 10.0, 1.0)
         pomdp_out[i] = torch.tensor([b[0], b[1], b[2], b[3], conf, obs_age / 10.0, 0.0, hub])
 
-    # --- Mamba: same path as generate_fusion_data line 783-786 ---
-    raw = encode_system_state(graph, component_ids)
+    # --- Mamba: observation-based (audit fix #1) ---
+    # Pass the fog-of-war belief so the state/health features come from what
+    # the operator OBSERVES, not the true component state (prevents the label
+    # from leaking into the Mamba input).
+    raw = encode_system_state(graph, component_ids, belief=belief)
     mamba_out = torch.tensor(raw, dtype=torch.float32).reshape(n, -1)[:, :NODE_FEAT_DIM]
 
     # --- Ground truth ---
@@ -511,8 +519,12 @@ def main():
         for name, desc, seed, n_ticks, inject_fn in scenario_defs[:3]:  # Top 3 scenarios
             noisy_name = f"{name}_noisy_{noise_level}"
             noisy_desc = f"{desc} [NOISY: {noise_level} telemetry]"
+            # Stable, process-independent offset per noise level. Python's
+            # builtin hash() is salted per-process (PYTHONHASHSEED), which would
+            # make the precomputed scenario .pt files non-reproducible run to run.
+            noise_offset = {"mild": 1000, "moderate": 2000, "harsh": 3000}[noise_level]
             s = generate_noisy_scenario(
-                noisy_name, noisy_desc, seed + hash(noise_level) % 10000,
+                noisy_name, noisy_desc, seed + noise_offset,
                 n_ticks, inject_fn, gnn, noise_profile=noise_level,
             )
             scenarios.append(s)
