@@ -1,0 +1,1617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SABLE Engine</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0908;
+  --panel: #0f0e0b;
+  --panel-alt: #161410;
+  --border: #2a2620;
+  --text: #c8bda0;
+  --dim: #7a7060;
+  --bright: #ede5d0;
+  --gold: #c9a227;
+  --dim-gold: #8b7320;
+  --success: #4a7a45;
+  --danger: #a63d2f;
+  --serif: 'Cormorant Garamond', Georgia, serif;
+  --mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--serif);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Grid background texture */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 80px 80px;
+  opacity: 0.06;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.container {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  grid-template-rows: auto 1fr 1fr auto;
+  gap: 1px;
+  height: 100vh;
+  background: var(--border);
+}
+
+/* Header */
+.header {
+  grid-column: 1 / -1;
+  background: var(--bg);
+  padding: 12px 24px 0 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header h1 {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 22px;
+  color: var(--bright);
+  letter-spacing: 3px;
+}
+
+.header h1 span { color: var(--gold); }
+
+.header .tagline {
+  font-family: var(--serif);
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: 1px;
+  font-style: italic;
+  margin-left: 12px;
+}
+
+.header .status {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.header .status .live { color: var(--success); }
+
+/* Hero Metrics Bar */
+.hero-bar {
+  display: flex;
+  gap: 2px;
+  margin-top: 10px;
+  padding-bottom: 10px;
+}
+
+.hero-metric {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 14px;
+  text-align: center;
+}
+
+.hero-metric .hero-value {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.hero-metric .hero-label {
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 3px;
+  color: var(--dim);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+/* Section labels */
+.section-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 5px;
+  color: var(--dim-gold);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+/* Panels */
+.panel {
+  background: var(--panel);
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+
+/* Panel 1: Topology Map */
+#topology {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.node-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+  min-height: 100%;
+}
+
+.tier-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+  padding: 2px 0;
+  position: relative;
+}
+
+.tier-label {
+  font-family: var(--mono);
+  font-size: 7px;
+  letter-spacing: 3px;
+  color: var(--dim);
+  text-transform: uppercase;
+  text-align: center;
+  margin-bottom: 1px;
+  opacity: 0.6;
+}
+
+.tier-divider {
+  border-top: 1px solid var(--border);
+  opacity: 0.3;
+  margin: 2px 0;
+}
+
+.node-cell {
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.3s;
+  position: relative;
+}
+
+.node-cell:hover { border-color: var(--dim-gold); }
+.node-cell.selected { border-color: var(--gold); border-width: 2px; }
+.node-cell .node-id { font-family: var(--mono); font-size: 9px; color: var(--dim); }
+.node-cell .node-state { font-family: var(--mono); font-size: 7px; margin-top: 2px; }
+
+.node-cell.state-0 { background: rgba(74, 122, 69, 0.25); }
+.node-cell.state-0 .node-state { color: var(--success); }
+.node-cell.state-1 { background: rgba(201, 162, 39, 0.25); }
+.node-cell.state-1 .node-state { color: var(--gold); }
+.node-cell.state-2 {
+  background: rgba(166, 61, 47, 0.40);
+  box-shadow: 0 0 12px rgba(166, 61, 47, 0.5), inset 0 0 8px rgba(166, 61, 47, 0.2);
+  border-color: var(--danger);
+  animation: pulse-danger 1.5s ease-in-out infinite;
+  z-index: 2;
+}
+.node-cell.state-2 .node-state { color: var(--danger); font-weight: 600; }
+@keyframes pulse-danger {
+  0%, 100% { box-shadow: 0 0 8px rgba(166,61,47,0.4); }
+  50% { box-shadow: 0 0 20px rgba(166,61,47,0.7), inset 0 0 12px rgba(166,61,47,0.3); }
+}
+.node-cell.state-3 { background: var(--bg); border-style: dashed; }
+.node-cell.state-3 .node-state { color: var(--dim); }
+.node-cell.state-4 { animation: oscillate 1s ease-in-out infinite; }
+.node-cell.state-4 .node-state { color: var(--gold); }
+
+@keyframes oscillate {
+  0%, 100% { background: rgba(74, 122, 69, 0.3); }
+  50% { background: rgba(166, 61, 47, 0.3); }
+}
+
+.node-cell.flash { animation: flash-gold 0.3s; }
+@keyframes flash-gold {
+  0% { border-color: var(--gold); box-shadow: 0 0 8px rgba(201,162,39,0.4); }
+  100% { border-color: var(--border); box-shadow: none; }
+}
+
+/* Panel 2: System Status */
+#status-panel {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.class-bar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.class-bar .label { width: 90px; color: var(--dim); }
+.class-bar .bar { height: 14px; border-radius: 2px; margin-right: 8px; transition: width 0.3s; }
+.class-bar .count { color: var(--text); min-width: 24px; }
+
+.bar-0 { background: var(--success); }
+.bar-1 { background: var(--gold); }
+.bar-2 { background: var(--danger); }
+.bar-3 { background: var(--dim); }
+.bar-4 { background: linear-gradient(90deg, var(--success), var(--danger)); }
+
+.routing-row {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+  margin-bottom: 4px;
+}
+.routing-row .expert { color: var(--bright); }
+.routing-row .weight { color: var(--dim-gold); }
+
+.confidence-block {
+  font-family: var(--mono);
+  font-size: 11px;
+  margin-top: 8px;
+}
+.confidence-block .value { color: var(--bright); font-size: 18px; }
+
+/* Panel 3: Timeline */
+#timeline {
+  grid-column: 1;
+  grid-row: 3;
+  overflow-x: auto;
+  position: relative;
+}
+
+.timeline-container {
+  position: relative;
+}
+
+.timeline-grid {
+  display: grid;
+  font-family: var(--mono);
+  font-size: 9px;
+  gap: 1px;
+  position: relative;
+}
+
+.timeline-grid .row-label {
+  color: var(--dim);
+  padding: 3px 8px;
+  text-align: right;
+  white-space: nowrap;
+  font-size: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.row-label .root-cause-badge {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 6px rgba(201,162,39,0.6);
+}
+
+.timeline-grid .tick-cell {
+  width: 24px;
+  height: 22px;
+  border-radius: 2px;
+  position: relative;
+  transition: opacity 0.2s;
+}
+
+.timeline-grid .tick-cell .cell-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.timeline-grid .tick-header {
+  color: var(--dim);
+  text-align: center;
+  font-size: 8px;
+  height: 16px;
+  line-height: 16px;
+}
+
+.tick-cell.s0 { background: rgba(74, 122, 69, 0.2); }
+.tick-cell.s0 .cell-dot { background: rgba(74, 122, 69, 0.7); }
+.tick-cell.s1 { background: rgba(201, 162, 39, 0.2); }
+.tick-cell.s1 .cell-dot { background: rgba(201, 162, 39, 0.8); }
+.tick-cell.s2 { background: rgba(166, 61, 47, 0.35); }
+.tick-cell.s2 .cell-dot { background: rgba(166, 61, 47, 0.9); box-shadow: 0 0 4px rgba(166,61,47,0.5); }
+.tick-cell.s3 { background: var(--bg); }
+.tick-cell.s3 .cell-dot { background: var(--dim); opacity: 0.3; }
+.tick-cell.s4 { background: linear-gradient(135deg, rgba(74,122,69,0.2), rgba(166,61,47,0.2)); }
+.tick-cell.s4 .cell-dot { background: var(--gold); }
+
+.tick-cell.low-conf { opacity: 0.45; }
+.tick-cell.mid-conf { opacity: 0.7; }
+.tick-cell.high-conf { opacity: 1.0; }
+
+/* Playhead */
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--gold);
+  box-shadow: 0 0 8px rgba(201,162,39,0.5);
+  z-index: 5;
+  pointer-events: none;
+  transition: left 0.3s ease;
+}
+
+/* Sparkline canvas */
+.sparkline-cell {
+  position: relative;
+  height: 22px;
+  width: 100%;
+  grid-column: 2 / -1;
+}
+
+.sparkline-canvas {
+  width: 100%;
+  height: 22px;
+  display: block;
+}
+
+/* Propagation arrows (SVG overlay) */
+.timeline-arrows {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Panel 4: Node Detail */
+#node-detail {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.detail-header {
+  font-family: var(--serif);
+  font-size: 18px;
+  color: var(--bright);
+  margin-bottom: 4px;
+}
+
+.detail-state {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.prob-row {
+  font-family: var(--mono);
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  margin-bottom: 3px;
+}
+.prob-row .plabel { width: 85px; color: var(--dim); }
+.prob-row .pbar { height: 10px; border-radius: 1px; margin-right: 6px; }
+.prob-row .pval { color: var(--text); }
+
+.trajectory-row {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.trajectory-row .t-entry { padding: 1px 4px; border-radius: 2px; }
+.trajectory-row .t-entry.ts0 { background: rgba(74,122,69,0.3); color: var(--success); }
+.trajectory-row .t-entry.ts1 { background: rgba(201,162,39,0.2); color: var(--gold); }
+.trajectory-row .t-entry.ts2 { background: rgba(166,61,47,0.3); color: var(--danger); }
+.trajectory-row .t-entry.ts3 { background: var(--bg); color: var(--dim); }
+.trajectory-row .t-entry.ts4 { color: var(--gold); }
+
+.trend {
+  font-family: var(--mono);
+  font-size: 11px;
+  margin-top: 8px;
+}
+
+/* Controls */
+.controls {
+  grid-column: 1 / -1;
+  background: var(--bg);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.controls button, .controls select {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 8px 16px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.15s;
+}
+
+.controls button:hover { background: var(--gold); color: var(--bg); }
+.controls select { padding: 8px 12px; }
+.controls .cycle-display {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dim);
+  margin-left: auto;
+}
+.controls .cycle-display span { color: var(--bright); }
+
+.scenario-desc {
+  font-family: var(--serif);
+  font-size: 13px;
+  color: var(--dim);
+  font-style: italic;
+  max-width: 500px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Summary overlay */
+.overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(10,9,8,0.9);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+.overlay.visible { display: flex; }
+.overlay-content {
+  background: var(--panel);
+  border: 1px solid var(--gold);
+  padding: 32px 48px;
+  max-width: 500px;
+  text-align: center;
+}
+.overlay-content h2 {
+  font-family: var(--serif);
+  color: var(--gold);
+  font-size: 22px;
+  margin-bottom: 16px;
+}
+.overlay-content .stat {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.overlay-content button {
+  margin-top: 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  background: var(--gold);
+  color: var(--bg);
+  border: none;
+  padding: 10px 24px;
+  cursor: pointer;
+}
+
+.rec-item {
+  border-left: 2px solid var(--border);
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.rec-item.p1 { border-color: var(--danger); }
+.rec-item.p2 { border-color: var(--gold); }
+.rec-item .rec-action {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--bright);
+}
+.rec-item .rec-target {
+  color: var(--gold);
+  font-weight: 600;
+}
+.rec-item .rec-reason {
+  color: var(--dim);
+  margin-top: 2px;
+}
+.rec-item .rec-fix {
+  color: var(--text);
+  margin-top: 2px;
+}
+.rec-summary {
+  font-family: var(--serif);
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-top">
+      <div style="display:flex;align-items:baseline">
+        <h1><span>SABLE</span></h1>
+        <span class="tagline">Situational Awareness through Belief-driven Latent Estimation</span>
+      </div>
+      <div class="status">
+        <span class="live">●</span> <span id="device-status">Loading...</span>
+      </div>
+    </div>
+    <div class="hero-bar">
+      <div class="hero-metric">
+        <div class="hero-value" id="hero-accuracy" style="color:var(--dim)">--</div>
+        <div class="hero-label">accuracy</div>
+      </div>
+      <div class="hero-metric">
+        <div class="hero-value" id="hero-affected" style="color:var(--dim)">--</div>
+        <div class="hero-label">affected</div>
+      </div>
+      <div class="hero-metric">
+        <div class="hero-value" id="hero-confidence" style="color:var(--dim)">--</div>
+        <div class="hero-label">confidence</div>
+      </div>
+      <div class="hero-metric">
+        <div class="hero-value" id="hero-inference" style="color:var(--dim)">--</div>
+        <div class="hero-label">inference</div>
+      </div>
+      <div class="hero-metric">
+        <div class="hero-value" id="hero-router" style="color:var(--dim)">--</div>
+        <div class="hero-label">top expert</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel 1: Topology Map -->
+  <div class="panel" id="topology">
+    <div class="section-label">01 — topology</div>
+    <div class="node-grid" id="node-grid"></div>
+  </div>
+
+  <!-- Panel 2: System Status -->
+  <div class="panel" id="status-panel">
+    <div class="section-label">02 — class distribution</div>
+    <div id="class-dist"></div>
+    <div class="section-label" style="margin-top:16px">03 — router decisions</div>
+    <div id="routing"></div>
+    <div class="section-label" style="margin-top:16px">04 — confidence</div>
+    <div class="confidence-block" id="confidence"></div>
+    <div class="section-label" style="margin-top:16px">05 — accuracy</div>
+    <div id="accuracy-readout" style="font-family:var(--mono)"></div>
+  </div>
+
+  <!-- Panel 3: Timeline -->
+  <div class="panel" id="timeline">
+    <div class="section-label">06 -- cascade timeline</div>
+    <div class="timeline-container">
+      <div class="timeline-grid" id="timeline-grid"></div>
+      <div class="timeline-playhead" id="timeline-playhead" style="display:none"></div>
+      <svg class="timeline-arrows" id="timeline-arrows"></svg>
+    </div>
+  </div>
+
+  <!-- Panel 4: Node Detail -->
+  <div class="panel" id="node-detail">
+    <div class="section-label">07 — node detail</div>
+    <div id="detail-content"><span style="color:var(--dim);font-family:var(--mono);font-size:11px">Click a node to inspect</span></div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button id="btn-play" onclick="togglePlay()">▶ play</button>
+    <button onclick="stepTick()">⏭ step</button>
+    <select id="speed-select" onchange="setSpeed(this.value)">
+      <option value="0.5">0.5x</option>
+      <option value="1" selected>1x</option>
+      <option value="2">2x</option>
+      <option value="5">5x</option>
+    </select>
+    <select id="scenario-select" onchange="loadScenario(this.value)"></select>
+    <button onclick="resetScenario()">↻ reset</button>
+    <button onclick="showRecommendations()" style="background:var(--gold);color:var(--bg)">⚡ fix</button>
+    <button id="btn-lora" onclick="toggleLoRA()" title="Toggle LoRA adapter (customer fine-tuning)" style="border-color:var(--success);color:var(--success)">ADAPTER on</button>
+    <button id="btn-mc" onclick="toggleMC()" title="MC Dropout: variance-based honest confidence">MC off</button>
+    <button id="btn-chat" onclick="toggleChat()" title="Chat with Nemotron about SABLE findings" style="background:var(--panel-alt);border-color:var(--dim-gold);color:var(--dim-gold)">ASK</button>
+    <div class="scenario-desc" id="scenario-desc"></div>
+    <div class="cycle-display">Cycle <span id="cycle-num">0</span> / <span id="total-ticks">0</span></div>
+  </div>
+</div>
+
+<!-- Summary/Recommendations Overlay -->
+<div class="overlay" id="overlay">
+  <div class="overlay-content" style="max-width:650px;text-align:left">
+    <h2 id="overlay-title" style="text-align:center">Scenario Complete</h2>
+    <div id="overlay-stats"></div>
+    <div id="overlay-recs" style="margin-top:16px"></div>
+    <div style="text-align:center">
+      <button onclick="document.getElementById('overlay').classList.remove('visible')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Chat Panel -->
+<div id="chat-panel" style="
+  display:none; position:fixed; bottom:60px; right:20px; width:480px; max-height:600px;
+  background:var(--panel); border:1px solid var(--gold); border-radius:6px;
+  z-index:200; flex-direction:column; font-family:var(--mono);
+">
+  <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center">
+    <span style="font-size:11px; color:var(--gold); letter-spacing:2px">SABLE + NEMOTRON</span>
+    <span onclick="toggleChat()" style="cursor:pointer; color:var(--dim); font-size:14px">x</span>
+  </div>
+  <div id="chat-messages" style="flex:1; overflow-y:auto; padding:12px 16px; max-height:450px; min-height:250px">
+    <div style="color:var(--dim); font-size:11px">Ask questions about SABLE's diagnostic findings.</div>
+  </div>
+  <div style="padding:8px; border-top:1px solid var(--border); display:flex; gap:6px">
+    <input id="chat-input" type="text" placeholder="Ask about the incident..."
+      onkeydown="if(event.key==='Enter')sendChat()"
+      style="flex:1; background:var(--bg); border:1px solid var(--border); border-radius:3px;
+             padding:8px 10px; color:var(--text); font-family:var(--mono); font-size:11px; outline:none">
+    <button onclick="sendChat()" style="
+      font-family:var(--mono); font-size:10px; padding:8px 12px;
+      background:var(--gold); color:var(--bg); border:none; border-radius:3px; cursor:pointer;
+    ">SEND</button>
+  </div>
+</div>
+
+<script>
+const STATE_NAMES = ['healthy','degraded','failed','unreachable','oscillating'];
+const STATE_ABBREV = ['HLT','DGR','FLD','UNR','OSC'];
+let ws = null;
+let playing = false;
+let selectedNode = null;
+let tickHistory = [];
+let nNodes = 0;
+let totalTicks = 0;
+let topoNodes = [];  // Topology metadata indexed by node position
+let topoEdges = [];  // Topology edges
+
+// Infrastructure type → color (matches adapter constants)
+const TYPE_COLORS = {
+  CORE_SWITCH: '#c9a227', ACCESS_SWITCH: '#d4b94e', FIREWALL: '#c94a3a',
+  ROUTER: '#e07040', LOAD_BALANCER: '#c084fc', SERVER_PHYSICAL: '#3a8ec9',
+  SERVER_VIRTUAL: '#5ca8d9', HYPERVISOR: '#2a6ea0', STORAGE_ARRAY: '#8a7f6e',
+  STORAGE_TARGET: '#a09585', VDI_BROKER: '#7c6fb0', VDI_HOST: '#9488c4',
+  DNS_SERVER: '#3aad6e', DHCP_SERVER: '#5cc48a', DOMAIN_CONTROLLER: '#2d8f5a',
+  CERTIFICATE_AUTHORITY: '#1a7040', MONITORING_SERVER: '#e8ddc4',
+  WAN_LINK: '#6b5b3a', INTERNET_GATEWAY: '#8a7040', APPLICATION_SERVICE: '#d4a030',
+};
+
+// ── API calls ──
+
+async function api(path, method='GET', body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch('/api/' + path, opts);
+  return r.json();
+}
+
+async function init() {
+  const status = await api('status');
+  nNodes = status.n_nodes;
+  totalTicks = status.total_ticks;
+  document.getElementById('device-status').textContent = status.device + ' • ' + nNodes + ' nodes';
+  document.getElementById('total-ticks').textContent = totalTicks;
+  document.getElementById('scenario-desc').textContent = status.scenario_description || '';
+
+  // Fetch topology metadata (non-blocking — grid works without it)
+  try {
+    const topo = await api('topology');
+    topoNodes = topo.nodes || [];
+    topoEdges = topo.edges || [];
+  } catch(e) { /* Topology endpoint may not be available; fall back to empty */ topoNodes = []; topoEdges = []; }
+
+  // Build node grid
+  buildNodeGrid(nNodes);
+
+  // Load scenario list
+  const scenarios = await api('scenarios');
+  const sel = document.getElementById('scenario-select');
+  sel.innerHTML = '';
+  scenarios.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.name;
+    opt.textContent = s.name.replace(/_/g, ' ');
+    if (s.name === status.scenario) opt.selected = true;
+    sel.appendChild(opt);
+  });
+
+  // Connect WebSocket
+  connectWS();
+}
+
+let wsReconnectDelay = 2000;
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+  ws.onopen = () => { wsReconnectDelay = 2000; };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'tick') handleTick(msg);
+    if (msg.type === 'complete') showComplete();
+  };
+  ws.onerror = (err) => { console.error('WebSocket error:', err); };
+  ws.onclose = () => {
+    setTimeout(connectWS, wsReconnectDelay);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
+  };
+}
+
+// Tier display order and groupings
+const TIER_ORDER = ['external', 'core', 'distribution', 'services', 'application', 'compute', 'access', 'storage', 'vdi'];
+const TIER_DISPLAY = {
+  external: 'EXTERNAL', core: 'CORE', distribution: 'DISTRIBUTION', services: 'SERVICES',
+  application: 'APPLICATION', compute: 'COMPUTE', access: 'ACCESS', storage: 'STORAGE', vdi: 'VDI'
+};
+
+function buildNodeGrid(n) {
+  const grid = document.getElementById('node-grid');
+  grid.innerHTML = '';
+  const hasTopo = topoNodes.length >= n;
+
+  if (hasTopo) {
+    // Group nodes by tier
+    const tierGroups = {};
+    for (let i = 0; i < n; i++) {
+      const t = topoNodes[i];
+      const tier = (t && t.tier) || 'compute';
+      if (!tierGroups[tier]) tierGroups[tier] = [];
+      tierGroups[tier].push(i);
+    }
+
+    // Render tiers in order
+    TIER_ORDER.forEach(tier => {
+      const indices = tierGroups[tier];
+      if (!indices || indices.length === 0) return;
+
+      const label = document.createElement('div');
+      label.className = 'tier-label';
+      label.textContent = TIER_DISPLAY[tier] || tier.toUpperCase();
+      grid.appendChild(label);
+
+      const row = document.createElement('div');
+      row.className = 'tier-row';
+
+      indices.forEach(i => {
+        const cell = createNodeCell(i, hasTopo);
+        row.appendChild(cell);
+      });
+
+      grid.appendChild(row);
+
+      const divider = document.createElement('div');
+      divider.className = 'tier-divider';
+      grid.appendChild(divider);
+    });
+  } else {
+    // Fallback: flat grid for scenarios without topology
+    const row = document.createElement('div');
+    row.className = 'tier-row';
+    row.style.flexWrap = 'wrap';
+    for (let i = 0; i < n; i++) {
+      row.appendChild(createNodeCell(i, false));
+    }
+    grid.appendChild(row);
+  }
+}
+
+function createNodeCell(i, hasTopo) {
+  const cell = document.createElement('div');
+  cell.className = 'node-cell state-0';
+  cell.id = 'node-' + i;
+  cell.style.width = '72px';
+  cell.style.height = '72px';
+
+  if (hasTopo && topoNodes[i]) {
+    const t = topoNodes[i];
+    const typeColor = TYPE_COLORS[t.type] || '#8a7f6e';
+    const shortLabel = (t.label || t.id || '').slice(0, 12);
+    const shortType = (t.type || '').replace(/_/g, ' ').toLowerCase().slice(0, 14);
+    cell.innerHTML =
+      '<div class="node-id" style="color:' + typeColor + '">' + shortLabel + '</div>' +
+      '<div class="node-state">HLT</div>' +
+      '<div style="font-family:var(--mono);font-size:6px;color:var(--dim);margin-top:1px">' + shortType + '</div>';
+    cell.title = t.id + ' -- ' + t.type + ' [' + (t.tier || '') + ']';
+    cell.style.borderColor = typeColor + '40';
+  } else {
+    cell.innerHTML =
+      '<div class="node-id">' + String(i).padStart(2,'0') + '</div>' +
+      '<div class="node-state">HLT</div>';
+  }
+  cell.onclick = () => selectNode(i);
+  return cell;
+}
+
+// ── Tick handling ──
+
+function handleTick(data) {
+  tickHistory.push(data);
+  document.getElementById('cycle-num').textContent = data.cycle;
+
+  // Update nodes
+  const prevStates = tickHistory.length > 1 ? tickHistory[tickHistory.length-2].nodes.map(n=>n.state_idx) : null;
+
+  data.nodes.forEach((node, i) => {
+    const cell = document.getElementById('node-' + i);
+    if (!cell) return;
+
+    // Remove old state class, add new
+    cell.className = 'node-cell state-' + node.state_idx;
+    if (i === selectedNode) cell.classList.add('selected');
+
+    // Flash on state change
+    if (prevStates && prevStates[i] !== node.state_idx) {
+      cell.classList.add('flash');
+      setTimeout(() => cell.classList.remove('flash'), 300);
+    }
+
+    // Confidence as opacity
+    cell.style.opacity = 0.5 + node.confidence * 0.5;
+    cell.querySelector('.node-state').textContent = STATE_ABBREV[node.state_idx];
+
+    // Update label from enriched tick data (first tick only — labels don't change)
+    if (node.label && tickHistory.length === 1) {
+      const idEl = cell.querySelector('.node-id');
+      if (idEl) idEl.textContent = node.label.slice(0, 12);
+    }
+  });
+
+  // Update class distribution
+  updateClassDist(data.class_counts);
+  updateRouting(data.routing);
+  updateConfidence(data);
+  updateAccuracy(data);
+  updateTimeline();
+  updateHeroBar(data);
+
+  // Update node detail if selected
+  if (selectedNode !== null) updateDetail(selectedNode);
+}
+
+function updateClassDist(counts) {
+  const el = document.getElementById('class-dist');
+  const max = Math.max(1, ...Object.values(counts));
+  el.innerHTML = STATE_NAMES.map((name, i) => {
+    const count = counts[name] || 0;
+    const width = Math.round((count / max) * 150);
+    return '<div class="class-bar"><span class="label">' + name + '</span>' +
+      '<div class="bar bar-' + i + '" style="width:' + width + 'px"></div>' +
+      '<span class="count">' + count + '</span></div>';
+  }).join('');
+}
+
+function updateRouting(routing) {
+  const el = document.getElementById('routing');
+  el.innerHTML = STATE_NAMES.map(name => {
+    const r = routing[name];
+    if (!r) return '<div class="routing-row">' + name + ' → <span class="expert">—</span></div>';
+    return '<div class="routing-row">' + name + ' → <span class="expert">' + r.expert +
+      '</span> <span class="weight">(' + Math.round(r.weight*100) + '%)</span></div>';
+  }).join('');
+}
+
+function updateConfidence(data) {
+  const el = document.getElementById('confidence');
+  el.innerHTML = '<div class="value">' + data.avg_confidence.toFixed(3) + '</div>' +
+    '<div style="margin-top:6px;font-size:10px;color:var(--dim)">Lowest: Node ' +
+    String(data.min_confidence.node).padStart(2,'0') + ' — ' + data.min_confidence.value.toFixed(3) + '</div>' +
+    '<div style="font-size:10px;color:var(--dim)">Highest: Node ' +
+    String(data.max_confidence.node).padStart(2,'0') + ' — ' + data.max_confidence.value.toFixed(3) + '</div>';
+}
+
+function updateAccuracy(data) {
+  const el = document.getElementById('accuracy-readout');
+  const thisAcc = data.accuracy;
+  if (thisAcc === null || thisAcc === undefined) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--dim)">No ground truth</div>';
+    return;
+  }
+
+  // Running average across all ticks
+  const allAccs = tickHistory.filter(t => t.accuracy !== null && t.accuracy !== undefined).map(t => t.accuracy);
+  const avg = allAccs.length > 0 ? allAccs.reduce((a, b) => a + b, 0) / allAccs.length : thisAcc;
+
+  const avgPct = (avg * 100).toFixed(1);
+  const thisPct = (thisAcc * 100).toFixed(1);
+
+  // Color based on accuracy level
+  const avgColor = avg >= 0.9 ? 'var(--success)' : avg >= 0.7 ? 'var(--gold)' : 'var(--danger)';
+  const thisColor = thisAcc >= 0.9 ? 'var(--success)' : thisAcc >= 0.7 ? 'var(--gold)' : 'var(--danger)';
+
+  el.innerHTML =
+    '<div style="display:flex;align-items:baseline;gap:8px">' +
+      '<div style="font-size:24px;font-weight:600;color:' + avgColor + '">' + avgPct + '%</div>' +
+      '<div style="font-size:10px;color:var(--dim)">avg</div>' +
+    '</div>' +
+    '<div style="margin-top:4px;font-size:10px;color:var(--dim)">' +
+      'This tick: <span style="color:' + thisColor + '">' + thisPct + '%</span>' +
+      ' &nbsp; Ticks: ' + allAccs.length +
+    '</div>';
+}
+
+function updateHeroBar(data) {
+  // Accuracy
+  const accEl = document.getElementById('hero-accuracy');
+  if (data.accuracy !== null && data.accuracy !== undefined) {
+    const pct = Math.round(data.accuracy * 100);
+    accEl.textContent = pct + '%';
+    accEl.style.color = pct >= 90 ? 'var(--success)' : pct >= 70 ? 'var(--gold)' : 'var(--danger)';
+  }
+
+  // Affected nodes
+  const affected = (data.class_counts.degraded || 0) + (data.class_counts.failed || 0) +
+    (data.class_counts.unreachable || 0) + (data.class_counts.oscillating || 0);
+  const affEl = document.getElementById('hero-affected');
+  affEl.textContent = affected + '/' + nNodes;
+  affEl.style.color = affected === 0 ? 'var(--success)' : affected <= 5 ? 'var(--gold)' : 'var(--danger)';
+
+  // Confidence
+  const confEl = document.getElementById('hero-confidence');
+  const confPct = Math.round(data.avg_confidence * 100);
+  confEl.textContent = confPct + '%';
+  confEl.style.color = confPct >= 90 ? 'var(--bright)' : confPct >= 70 ? 'var(--gold)' : 'var(--danger)';
+
+  // Inference time
+  const infEl = document.getElementById('hero-inference');
+  const ms = data.inference_ms || 0;
+  infEl.textContent = ms < 1 ? '<1ms' : Math.round(ms) + 'ms';
+  infEl.style.color = ms <= 25 ? 'var(--success)' : ms <= 100 ? 'var(--gold)' : 'var(--danger)';
+
+  // Top expert (most-used router decision)
+  const routerEl = document.getElementById('hero-router');
+  const expertCounts = {GNN: 0, POMDP: 0, Mamba: 0, Fusion: 0};
+  data.nodes.forEach(n => {
+    let topExpert = 'GNN', topWeight = 0;
+    for (const [exp, w] of Object.entries(n.routing)) {
+      if (w > topWeight) { topWeight = w; topExpert = exp; }
+    }
+    expertCounts[topExpert]++;
+  });
+  const topExpert = Object.entries(expertCounts).sort((a,b) => b[1]-a[1])[0];
+  routerEl.textContent = topExpert[0];
+  routerEl.style.color = 'var(--gold)';
+}
+
+function updateTimeline() {
+  if (tickHistory.length === 0) return;
+
+  // Find nodes that changed state or are non-healthy
+  const changedNodes = new Set();
+  for (let t = 1; t < tickHistory.length; t++) {
+    for (let i = 0; i < nNodes; i++) {
+      if (tickHistory[t].nodes[i].state_idx !== tickHistory[t-1].nodes[i].state_idx) {
+        changedNodes.add(i);
+      }
+    }
+  }
+  const latest = tickHistory[tickHistory.length-1];
+  latest.nodes.forEach((n,i) => { if (n.state_idx !== 0) changedNodes.add(i); });
+
+  // Sort by first affected tick (root cause first)
+  const firstBadTick = {};
+  changedNodes.forEach(i => {
+    for (let t = 0; t < tickHistory.length; t++) {
+      if (tickHistory[t].nodes[i].state_idx !== 0) { firstBadTick[i] = t; break; }
+    }
+    if (firstBadTick[i] === undefined) firstBadTick[i] = tickHistory.length;
+  });
+
+  const nodes = [...changedNodes].sort((a,b) => firstBadTick[a] - firstBadTick[b] || a - b);
+  if (nodes.length === 0) return;
+
+  // Identify root cause (first node to go non-healthy)
+  const rootCauseNode = nodes.length > 0 ? nodes[0] : -1;
+  const rootCauseTick = firstBadTick[rootCauseNode] || 0;
+
+  const grid = document.getElementById('timeline-grid');
+  const cellW = 24;
+  const labelWidth = topoNodes.length > 0 ? '110px' : '70px';
+  grid.style.gridTemplateColumns = labelWidth + ' repeat(' + tickHistory.length + ', ' + cellW + 'px)';
+
+  // Header row
+  let html = '<div class="row-label"></div>';
+  for (let t = 0; t < tickHistory.length; t++) {
+    html += '<div class="tick-header">' + t + '</div>';
+  }
+
+  // Node rows with confidence opacity, root cause badge, and cell dots
+  nodes.forEach(nodeIdx => {
+    const tLabel = (topoNodes[nodeIdx] && topoNodes[nodeIdx].id) ? topoNodes[nodeIdx].id : String(nodeIdx).padStart(2,'0');
+    const isRoot = nodeIdx === rootCauseNode;
+    const badge = isRoot ? '<span class="root-cause-badge" title="Root cause"></span>' : '';
+    html += '<div class="row-label">' + badge + tLabel + '</div>';
+
+    for (let t = 0; t < tickHistory.length; t++) {
+      const node = tickHistory[t].nodes[nodeIdx];
+      const s = node.state_idx;
+      const conf = node.confidence || 0;
+
+      // Confidence class
+      let confClass = 'high-conf';
+      if (conf < 0.6) confClass = 'low-conf';
+      else if (conf < 0.85) confClass = 'mid-conf';
+
+      html += '<div class="tick-cell s' + s + ' ' + confClass + '" data-row="' + nodeIdx + '" data-tick="' + t + '">' +
+        '<div class="cell-dot"></div></div>';
+    }
+  });
+
+  grid.innerHTML = html;
+
+  // Playhead position
+  updatePlayhead(tickHistory.length - 1, nodes.length, cellW, labelWidth);
+
+  // Draw propagation arrows
+  drawPropagationArrows(nodes, cellW, labelWidth);
+
+  // Draw sparklines
+  drawSparklines(nodes);
+}
+
+function updatePlayhead(currentTick, nRows, cellW, labelWidth) {
+  const playhead = document.getElementById('timeline-playhead');
+  const grid = document.getElementById('timeline-grid');
+  if (!grid || currentTick < 0) { playhead.style.display = 'none'; return; }
+
+  // Parse label width
+  const lw = parseInt(labelWidth);
+  const left = lw + (currentTick * (cellW + 1)) + cellW / 2;
+
+  playhead.style.display = 'block';
+  playhead.style.left = left + 'px';
+  playhead.style.top = '0';
+  playhead.style.height = grid.offsetHeight + 'px';
+}
+
+function drawPropagationArrows(nodes, cellW, labelWidth) {
+  const svg = document.getElementById('timeline-arrows');
+  svg.innerHTML = '';
+  if (tickHistory.length < 2 || nodes.length < 2) return;
+
+  const lw = parseInt(labelWidth);
+  const rowH = 23; // cell height + gap
+  const headerH = 17; // header row height
+
+  // For each node that transitions to non-healthy, find if a connected node
+  // transitioned one tick earlier (propagation signal)
+  const nodeRowMap = {};
+  nodes.forEach((nIdx, row) => { nodeRowMap[nIdx] = row; });
+
+  // Build edge lookup from topology
+  const connected = {};
+  topoEdges.forEach(e => {
+    // Map topo IDs to node indices
+    const srcIdx = topoNodes.findIndex(n => n && n.id === e.source);
+    const tgtIdx = topoNodes.findIndex(n => n && n.id === e.target);
+    if (srcIdx >= 0 && tgtIdx >= 0) {
+      if (!connected[srcIdx]) connected[srcIdx] = [];
+      if (!connected[tgtIdx]) connected[tgtIdx] = [];
+      connected[srcIdx].push(tgtIdx);
+      connected[tgtIdx].push(srcIdx);
+    }
+  });
+
+  let arrows = '';
+  nodes.forEach(nodeIdx => {
+    // Find the tick where this node first went non-healthy
+    for (let t = 1; t < tickHistory.length; t++) {
+      const prev = tickHistory[t-1].nodes[nodeIdx].state_idx;
+      const curr = tickHistory[t].nodes[nodeIdx].state_idx;
+      if (prev === 0 && curr !== 0) {
+        // This node just transitioned. Check if a connected node was already bad at t-1
+        const neighbors = connected[nodeIdx] || [];
+        for (const nbrIdx of neighbors) {
+          if (nodeRowMap[nbrIdx] === undefined) continue;
+          const nbrPrevState = tickHistory[t-1].nodes[nbrIdx].state_idx;
+          if (nbrPrevState !== 0) {
+            // Draw arrow from neighbor at t-1 to this node at t
+            const srcRow = nodeRowMap[nbrIdx];
+            const dstRow = nodeRowMap[nodeIdx];
+            const x1 = lw + ((t-1) * (cellW + 1)) + cellW / 2;
+            const y1 = headerH + srcRow * rowH + rowH / 2;
+            const x2 = lw + (t * (cellW + 1)) + cellW / 2;
+            const y2 = headerH + dstRow * rowH + rowH / 2;
+
+            arrows += '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" ' +
+              'stroke="rgba(201,162,39,0.25)" stroke-width="1" stroke-dasharray="3,2"/>';
+            // Small arrowhead dot at destination
+            arrows += '<circle cx="' + x2 + '" cy="' + y2 + '" r="2" fill="rgba(201,162,39,0.4)"/>';
+            break; // One arrow per transition
+          }
+        }
+        break; // Only first transition per node
+      }
+    }
+  });
+
+  svg.innerHTML = arrows;
+  // Size SVG to match grid
+  const grid = document.getElementById('timeline-grid');
+  svg.setAttribute('width', grid.scrollWidth);
+  svg.setAttribute('height', grid.offsetHeight);
+}
+
+function drawSparklines(nodes) {
+  // Draw health sparklines as tiny canvas overlays per row
+  // Use a single canvas overlaid on the timeline for performance
+  const existing = document.getElementById('sparkline-overlay');
+  if (existing) existing.remove();
+
+  const grid = document.getElementById('timeline-grid');
+  if (!grid || tickHistory.length < 2) return;
+
+  const canvas = document.createElement('canvas');
+  canvas.id = 'sparkline-overlay';
+  canvas.style.position = 'absolute';
+  canvas.style.top = '0';
+  canvas.style.left = '0';
+  canvas.style.pointerEvents = 'none';
+  canvas.style.zIndex = '4';
+
+  const cellW = 24;
+  const gap = 1;
+  const rowH = 23;
+  const headerH = 17;
+  const lw = topoNodes.length > 0 ? 110 : 70;
+
+  canvas.width = grid.scrollWidth;
+  canvas.height = grid.offsetHeight;
+  canvas.style.width = canvas.width + 'px';
+  canvas.style.height = canvas.height + 'px';
+
+  const ctx = canvas.getContext('2d');
+
+  const stateToHealth = [1.0, 0.6, 0.15, 0.0, 0.4]; // healthy, degraded, failed, unreachable, oscillating
+
+  nodes.forEach((nodeIdx, row) => {
+    const y0 = headerH + row * rowH;
+    const yBottom = y0 + rowH - 2;
+    const yTop = y0 + 3;
+    const yRange = yBottom - yTop;
+
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(201,162,39,0.3)';
+    ctx.lineWidth = 1.2;
+
+    for (let t = 0; t < tickHistory.length; t++) {
+      const node = tickHistory[t].nodes[nodeIdx];
+      const health = stateToHealth[node.state_idx];
+      const x = lw + t * (cellW + gap) + cellW / 2;
+      const y = yBottom - health * yRange;
+
+      if (t === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Draw dots at state transitions
+    for (let t = 1; t < tickHistory.length; t++) {
+      const prev = tickHistory[t-1].nodes[nodeIdx].state_idx;
+      const curr = tickHistory[t].nodes[nodeIdx].state_idx;
+      if (prev !== curr) {
+        const health = stateToHealth[curr];
+        const x = lw + t * (cellW + gap) + cellW / 2;
+        const y = yBottom - health * yRange;
+        const colors = ['rgba(74,122,69,0.8)', 'rgba(201,162,39,0.8)', 'rgba(166,61,47,0.9)', 'rgba(138,127,110,0.5)', 'rgba(201,162,39,0.7)'];
+        ctx.beginPath();
+        ctx.fillStyle = colors[curr];
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  });
+
+  grid.parentElement.appendChild(canvas);
+}
+
+// ── Node detail ──
+
+function selectNode(idx) {
+  // Deselect previous
+  if (selectedNode !== null) {
+    const prev = document.getElementById('node-' + selectedNode);
+    if (prev) prev.classList.remove('selected');
+  }
+  selectedNode = idx;
+  const cell = document.getElementById('node-' + idx);
+  if (cell) cell.classList.add('selected');
+  updateDetail(idx);
+}
+
+function updateDetail(idx) {
+  if (tickHistory.length === 0) return;
+  const latest = tickHistory[tickHistory.length - 1];
+  const node = latest.nodes[idx];
+  const el = document.getElementById('detail-content');
+
+  const probBars = STATE_NAMES.map((name, c) => {
+    const val = node.probs[name];
+    const width = Math.round(val * 120);
+    return '<div class="prob-row"><span class="plabel">' + name + '</span>' +
+      '<div class="pbar bar-' + c + '" style="width:' + width + 'px"></div>' +
+      '<span class="pval">' + val.toFixed(3) + '</span></div>';
+  }).join('');
+
+  const trajectory = tickHistory.map((t, tick) => {
+    const s = t.nodes[idx].state_idx;
+    return '<span class="t-entry ts' + s + '">' + STATE_ABBREV[s] + '</span>';
+  }).join('');
+
+  const trendArrow = node.trend === 'improving' ? '↑' : node.trend === 'deteriorating' ? '↓' : '→';
+  const trendColor = node.trend === 'improving' ? 'var(--success)' : node.trend === 'deteriorating' ? 'var(--danger)' : 'var(--dim)';
+
+  // Topology metadata header — from pre-loaded YAML or enriched tick data
+  const hasTopo = topoNodes.length > idx && topoNodes[idx];
+  const topo = hasTopo ? topoNodes[idx] : null;
+  // Fall back to enriched tick data if topology YAML wasn't pre-loaded
+  const tickType = node.component_type || (topo && topo.type) || null;
+  const typeColor = tickType ? (TYPE_COLORS[tickType] || 'var(--dim)') : 'var(--dim)';
+  const headerLabel = node.label || (topo && (topo.label || topo.id)) || 'Node ' + String(idx).padStart(2,'0');
+  const displayType = tickType || (topo && topo.type) || null;
+  const displayId = node.topo_id || (topo && topo.id) || null;
+  const displayTier = topo ? topo.tier : null;
+  const topoMeta = displayType ?
+    '<div style="font-family:var(--mono);font-size:10px;color:' + typeColor + ';margin-bottom:2px">' +
+    displayType.replace(/_/g, ' ') + '</div>' +
+    '<div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:8px">' +
+    (displayTier ? 'Tier: ' + displayTier + ' &nbsp; ' : '') +
+    (displayId ? 'ID: ' + displayId : '') + '</div>' : '';
+
+  // Connected dependencies from topology
+  let depsHtml = '';
+  if (topo) {
+    const deps = topoEdges.filter(e => e.source === topo.id || e.target === topo.id);
+    if (deps.length > 0) {
+      depsHtml = '<div style="font-family:var(--mono);font-size:9px;color:var(--dim-gold);margin-top:12px;letter-spacing:3px">DEPENDENCIES</div>';
+      deps.forEach(e => {
+        const dir = e.source === topo.id ? '→' : '←';
+        const other = e.source === topo.id ? e.target : e.source;
+        const depType = (e.type || 'NETWORK_PATH').replace(/_/g, ' ').toLowerCase();
+        const crit = e.criticality || 'SOFT';
+        const critColor = crit === 'HARD' ? 'var(--danger)' : crit === 'REDUNDANT' ? 'var(--dim)' : 'var(--gold)';
+        depsHtml += '<div style="font-family:var(--mono);font-size:9px;margin:2px 0;color:var(--text)">' +
+          dir + ' <span style="color:var(--bright)">' + other + '</span> ' +
+          '<span style="color:var(--dim)">' + depType + '</span> ' +
+          '<span style="color:' + critColor + '">' + crit + '</span></div>';
+      });
+    }
+  }
+
+  el.innerHTML =
+    '<div class="detail-header">' + headerLabel + '</div>' +
+    topoMeta +
+    '<div class="detail-state" style="color:' + ['var(--success)','var(--gold)','var(--danger)','var(--dim)','var(--gold)'][node.state_idx] + '">' +
+    node.state.toUpperCase() + '</div>' +
+    '<div style="font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:12px">Confidence: ' + node.confidence.toFixed(3) + '</div>' +
+    probBars +
+    depsHtml +
+    '<div style="font-family:var(--mono);font-size:9px;color:var(--dim-gold);margin-top:12px;letter-spacing:3px">TRAJECTORY</div>' +
+    '<div class="trajectory-row">' + trajectory + '</div>' +
+    '<div class="trend" style="color:' + trendColor + '">Trend: ' + node.trend.toUpperCase() + ' ' + trendArrow + '</div>' +
+    '<div style="font-family:var(--mono);font-size:9px;color:var(--dim-gold);margin-top:14px;letter-spacing:3px">CORRECT STATE</div>' +
+    '<div style="display:flex;gap:3px;margin-top:4px;flex-wrap:wrap">' +
+    STATE_NAMES.map((s, si) => {
+      const colors = ['var(--success)','var(--gold)','var(--danger)','var(--dim)','var(--gold)'];
+      const isCurrent = si === node.state_idx;
+      return '<button onclick="submitCorrection(' + idx + ',\'' + s + '\')" style="' +
+        'font-family:var(--mono);font-size:8px;padding:3px 6px;border:1px solid ' +
+        (isCurrent ? colors[si] : 'var(--border)') + ';background:' +
+        (isCurrent ? 'transparent' : 'var(--panel)') + ';color:' + colors[si] +
+        ';cursor:pointer;border-radius:2px;letter-spacing:1px">' + STATE_ABBREV[si] + '</button>';
+    }).join('') +
+    '</div>' +
+    '<div id="feedback-msg" style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px"></div>';
+}
+
+async function submitCorrection(nodeIdx, correctState) {
+  const result = await api('feedback', 'POST', {
+    node_idx: nodeIdx,
+    correct_state: correctState,
+  });
+  if (result.recorded) {
+    const msg = document.getElementById('feedback-msg');
+    if (msg) msg.textContent = 'Recorded: ' + result.node + ' -> ' + result.corrected_to;
+    setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
+  }
+}
+
+// ── Controls ──
+
+async function togglePlay() {
+  playing = !playing;
+  document.getElementById('btn-play').textContent = playing ? '⏸ pause' : '▶ play';
+  const speed = parseFloat(document.getElementById('speed-select').value);
+  await api('autoplay', 'POST', { action: playing ? 'start' : 'stop', speed });
+}
+
+async function stepTick() {
+  const data = await api('tick', 'POST');
+  if (!data.error) handleTick(data);
+}
+
+function setSpeed(val) {
+  if (playing) api('autoplay', 'POST', { action: 'start', speed: parseFloat(val) });
+}
+
+async function loadScenario(name) {
+  playing = false;
+  document.getElementById('btn-play').textContent = '▶ play';
+  tickHistory = [];
+  selectedNode = null;
+
+  const result = await api('scenario', 'POST', { name });
+  nNodes = result.n_nodes;
+  totalTicks = result.n_ticks;
+  document.getElementById('total-ticks').textContent = totalTicks;
+  document.getElementById('cycle-num').textContent = '0';
+  buildNodeGrid(nNodes);
+  document.getElementById('timeline-grid').innerHTML = '';
+  document.getElementById('detail-content').innerHTML = '<span style="color:var(--dim);font-family:var(--mono);font-size:11px">Click a node to inspect</span>';
+
+  const status = await api('status');
+  document.getElementById('scenario-desc').textContent = status.scenario_description || '';
+  // Reset chat
+  chatHistory = [];
+  document.getElementById('chat-messages').innerHTML = '<div style="color:var(--dim); font-size:11px">Ask questions about SABLE\'s diagnostic findings.</div>';
+}
+
+let loraEnabled = true;
+async function toggleLoRA() {
+  loraEnabled = !loraEnabled;
+  await api('lora', 'POST', { enabled: loraEnabled });
+  const btn = document.getElementById('btn-lora');
+  btn.textContent = loraEnabled ? 'ADAPTER on' : 'ADAPTER off';
+  btn.style.borderColor = loraEnabled ? 'var(--success)' : 'var(--danger)';
+  btn.style.color = loraEnabled ? 'var(--success)' : 'var(--danger)';
+}
+
+let mcEnabled = false;
+async function toggleMC() {
+  mcEnabled = !mcEnabled;
+  const samples = mcEnabled ? 5 : 0;
+  await api('mc_dropout', 'POST', { samples });
+  document.getElementById('btn-mc').textContent = mcEnabled ? 'MC 5x' : 'MC off';
+  document.getElementById('btn-mc').style.borderColor = mcEnabled ? 'var(--gold)' : 'var(--border)';
+  document.getElementById('btn-mc').style.color = mcEnabled ? 'var(--gold)' : 'var(--text)';
+}
+
+async function resetScenario() {
+  playing = false;
+  document.getElementById('btn-play').textContent = '▶ play';
+  tickHistory = [];
+  selectedNode = null;
+  await api('reset', 'POST');
+  document.getElementById('cycle-num').textContent = '0';
+  buildNodeGrid(nNodes);
+  document.getElementById('timeline-grid').innerHTML = '';
+  document.getElementById('detail-content').innerHTML = '<span style="color:var(--dim);font-family:var(--mono);font-size:11px">Click a node to inspect</span>';
+  document.getElementById('class-dist').innerHTML = '';
+  document.getElementById('routing').innerHTML = '';
+  document.getElementById('confidence').innerHTML = '';
+  // Reset chat
+  chatHistory = [];
+  document.getElementById('chat-messages').innerHTML = '<div style="color:var(--dim); font-size:11px">Ask questions about SABLE\'s diagnostic findings.</div>';
+}
+
+function showComplete() {
+  playing = false;
+  document.getElementById('btn-play').textContent = '▶ play';
+
+  let correctTotal = 0, total = 0;
+  tickHistory.forEach(t => {
+    if (t.accuracy !== null) { correctTotal += t.accuracy * nNodes; total += nNodes; }
+  });
+  const acc = total > 0 ? (correctTotal / total).toFixed(3) : 'N/A';
+
+  document.getElementById('overlay-title').textContent = 'Scenario Complete';
+  const stats = document.getElementById('overlay-stats');
+  stats.innerHTML =
+    '<div class="stat">Cycles completed: ' + tickHistory.length + '</div>' +
+    '<div class="stat">Average accuracy: ' + acc + '</div>' +
+    '<div class="stat">Final confidence: ' + (tickHistory.length > 0 ? tickHistory[tickHistory.length-1].avg_confidence.toFixed(3) : 'N/A') + '</div>';
+
+  // Auto-fetch recommendations
+  fetchRecommendations();
+  document.getElementById('overlay').classList.add('visible');
+}
+
+async function showRecommendations() {
+  document.getElementById('overlay-title').textContent = 'Recommended Actions';
+  document.getElementById('overlay-stats').innerHTML = '';
+  await fetchRecommendations();
+  document.getElementById('overlay').classList.add('visible');
+}
+
+let chatHistory = [];
+let chatOpen = false;
+
+function toggleChat() {
+  chatOpen = !chatOpen;
+  const panel = document.getElementById('chat-panel');
+  panel.style.display = chatOpen ? 'flex' : 'none';
+  if (chatOpen) document.getElementById('chat-input').focus();
+}
+
+function formatChat(text) {
+  // Simple markdown: **bold**, newlines, numbered lists, bullet lists
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, '<strong style="color:var(--bright)">$1</strong>')
+    .replace(/\n(\d+)\.\s/g, '<br><span style="color:var(--dim-gold)">$1.</span> ')
+    .replace(/\n[-*]\s/g, '<br><span style="color:var(--dim-gold)">&bull;</span> ')
+    .replace(/\n\n/g, '<br><br>')
+    .replace(/\n/g, '<br>');
+}
+
+function addChatMessage(role, text) {
+  const el = document.getElementById('chat-messages');
+  const color = role === 'user' ? 'var(--bright)' : 'var(--text)';
+  const label = role === 'user' ? 'YOU' : 'NEMOTRON';
+  const labelColor = role === 'user' ? 'var(--dim)' : 'var(--gold)';
+  const formatted = role === 'user' ? text : formatChat(text);
+  el.innerHTML += '<div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)">' +
+    '<div style="font-size:9px;color:' + labelColor + ';letter-spacing:2px;margin-bottom:4px">' +
+    label + '</div><div style="font-size:12px;color:' + color + ';line-height:1.6;font-family:var(--serif)">' +
+    formatted + '</div></div>';
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  input.value = '';
+  addChatMessage('user', msg);
+  chatHistory.push({role: 'user', content: msg});
+
+  addChatMessage('assistant', '<span style="color:var(--dim)">Thinking...</span>');
+
+  const result = await api('nemotron/chat', 'POST', {
+    message: msg,
+    history: chatHistory.slice(-10),
+  });
+
+  // Remove "Thinking..." message
+  const el = document.getElementById('chat-messages');
+  el.removeChild(el.lastChild);
+
+  if (result.error) {
+    addChatMessage('assistant', result.error);
+    return;
+  }
+
+  if (!result.nemotron_available) {
+    addChatMessage('assistant', 'Nemotron not running. Start llama-server on port 8081.');
+    return;
+  }
+
+  addChatMessage('assistant', result.reply);
+  chatHistory.push({role: 'assistant', content: result.reply});
+}
+
+async function requestNemotronReport() {
+  document.getElementById('overlay-title').textContent = 'LLM Incident Report';
+  document.getElementById('overlay-stats').innerHTML = '<div style="color:var(--dim);font-family:var(--mono);font-size:11px">Generating report via Nemotron...</div>';
+  document.getElementById('overlay-recs').innerHTML = '';
+  document.getElementById('overlay').classList.add('visible');
+
+  const result = await api('nemotron/report', 'POST');
+  if (result.error) {
+    document.getElementById('overlay-stats').innerHTML = '<div style="color:var(--danger)">' + result.error + '</div>';
+    return;
+  }
+  if (!result.nemotron_available) {
+    document.getElementById('overlay-stats').innerHTML =
+      '<div style="color:var(--danger);font-family:var(--mono);font-size:11px">Nemotron not running. Start llama-server on port 8081.</div>' +
+      '<div style="color:var(--dim);font-family:var(--mono);font-size:10px;margin-top:8px">' +
+      'llama-server -m /mnt/vault/models/nemotron-nano/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf ' +
+      '--ctx-size 4096 --temp 0.4 -ngl 999 --port 8081</div>';
+    // Still show SABLE's structured data
+    if (result.recommendations) {
+      await fetchRecommendations();
+    }
+    return;
+  }
+
+  // Show the narrative
+  let html = '<div style="font-family:var(--serif);font-size:14px;color:var(--text);line-height:1.7;margin-bottom:16px;white-space:pre-wrap">' +
+    result.narrative + '</div>';
+
+  // Show SABLE's raw data below for verification
+  html += '<div class="section-label" style="margin-top:16px">SABLE STRUCTURED DATA</div>';
+  html += '<div class="rec-summary" style="font-size:12px">' + (result.recommendations?.summary || '') + '</div>';
+  if (result.recommendations?.actions) {
+    result.recommendations.actions.slice(0, 5).forEach(function(a) {
+      const pClass = a.priority <= 1 ? 'p1' : (a.priority <= 3 ? 'p2' : '');
+      const typeTag = a.target_type ? ' [' + a.target_type.replace(/_/g,' ') + ']' : '';
+      html += '<div class="rec-item ' + pClass + '">' +
+        '<div><span class="rec-action">' + a.priority + '. ' + a.action + '</span> -> <span class="rec-target">' + a.target + '</span>' + typeTag + '</div>' +
+        '<div class="rec-reason">' + a.reason + '</div></div>';
+    });
+  }
+
+  document.getElementById('overlay-stats').innerHTML = html;
+}
+
+async function fetchRecommendations() {
+  const recs = await api('recommendations');
+  const el = document.getElementById('overlay-recs');
+
+  if (!recs.actions || recs.actions.length === 0) {
+    el.innerHTML = '<div class="rec-summary">' + recs.summary + '</div>';
+    return;
+  }
+
+  let html = '<div class="rec-summary">' + recs.summary + '</div>';
+  html += '<div class="section-label" style="margin-top:12px">07 — recommended actions</div>';
+
+  recs.actions.forEach(a => {
+    const pClass = a.priority <= 1 ? 'p1' : (a.priority <= 3 ? 'p2' : '');
+    const typeTag = a.target_type ? ' <span style="color:var(--dim);font-size:9px">[' + a.target_type.replace(/_/g,' ') + ']</span>' : '';
+    html += '<div class="rec-item ' + pClass + '">' +
+      '<div><span class="rec-action">' + a.priority + '. ' + a.action + '</span> → <span class="rec-target">' + a.target + '</span>' + typeTag + '</div>' +
+      '<div class="rec-reason">' + a.reason + '</div>' +
+      '<div class="rec-fix">↳ ' + a.recommendation + '</div>' +
+      '</div>';
+  });
+
+  el.innerHTML = html;
+}
+
+// Boot — init() is async, use IIFE to handle at top level
+(async () => { await init(); })();
+</script>
+</body>
+</html>

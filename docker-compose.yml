@@ -1,0 +1,50 @@
+# The whole thing: the console image (OVERLORD + console + SABLE + monitor)
+# next to the lab stack it heals.
+#
+#   make up        # = OLS_DIR=$PWD docker compose up -d --build
+#   open http://127.0.0.1:7780
+#
+# OLS_DIR must be the absolute HOST path of this checkout (the Makefile sets
+# it). It is bind-mounted at the same path inside the container so that the
+# executor's `docker compose -f <lab>/docker-compose.yml …`, sent to the
+# host daemon through the socket, resolves the lab's bind mounts host-side.
+name: sable-lab
+
+include:
+  - path: sable/console/lab/docker-compose.yml
+
+services:
+  console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: overlord-sable-console:local
+    environment:
+      SABLE_DIR: ${OLS_DIR:?set OLS_DIR to the absolute host path of this checkout (make sets it)}/sable
+      PROMETHEUS_URL: http://prometheus:9090
+      SABLE_MODE: ${SABLE_MODE:-auto}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CONSOLE_POLICY: ${CONSOLE_POLICY:-}
+      CONSOLE_DISABLE_ACTIONS: ${CONSOLE_DISABLE_ACTIONS:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${OLS_DIR}:${OLS_DIR}
+      - console-data:/data
+    devices:
+      - /dev/fuse:/dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    ports:
+      - "7780:7780"        # the console
+      - "8080:8080"        # SABLE's own API / dashboard
+    networks:
+      - lab                # the lab's network (named sable-lab in sable/console/lab/docker-compose.yml)
+    depends_on:
+      prometheus:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  console-data:

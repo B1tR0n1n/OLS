@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Model weights (large binary files — don't version)
+*.gguf
+*.bin
+*.safetensors
+*.pt
+
+# Checkpoint directories
+**/checkpoints*/
+docker/scenarios/
+
+# Training data (large, generated)
+pillar1/data/
+pillar3/data/
+/data/
+
+# External models
+models/
+
+# Environment
+.env
+*.tar.gz
+*.log
+
+# Node / Frontend
+node_modules/
+dashboard/dist/
+
+# Internal plans (not public)
+SABLE_PLAN.md
+SABLE_PLANFULL.md
+
+# Patent documents (filed, do not publish)
+docs/PROVISIONAL_PATENT_DRAFT.md
+docs/SABLE_PROVISIONAL_PATENT.docx
+docs/generate_patent_docx.py
+docs/generate_patent_figures.py
+docs/patent_figures/
+docs/download/
+
+# Session summaries (internal working notes)
+docs/sessions/
+
+# Dashboard backup
+docker/dashboard_backup.html
+
+# Feedback database (local state)
+docker/feedback.db
+
+# Sonar
+sonar-results.json
+.sonar/
+
+# OS
+.DS_Store

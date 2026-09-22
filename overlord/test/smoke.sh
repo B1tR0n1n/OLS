@@ -1,0 +1,359 @@
+#!/usr/bin/env bash
+# OVERLORD e2e suite: run/diff/rollback/commit, conflict detection, provenance,
+# shell, syscall trace (when strace present), containment (when kernel backend
+# is available). Exercises whichever backends the host supports.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+export OVERLORD_HOME="$(mktemp -d)"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$OVERLORD_HOME" "$WORK"' EXIT
+
+OVERLORD="python3 $HERE/overlord.py"
+# The AppArmor userns grant attaches to the installed ELF launcher, not to a
+# bare python3 invocation — use the installed binary when it matches the repo.
+if command -v overlord > /dev/null && cmp -s /usr/local/lib/overlord/overlord.py "$HERE/overlord.py"; then
+    OVERLORD="overlord"
+fi
+echo "under test: $OVERLORD"
+TARGET="$WORK/target"
+
+reset_target() {
+    rm -rf "$TARGET"
+    mkdir -p "$TARGET/sub"
+    echo original > "$TARGET/keep.txt"
+    echo original > "$TARGET/edit.txt"
+    echo original > "$TARGET/doomed.txt"
+    echo original > "$TARGET/sub/nested.txt"
+}
+
+fail() {
+    local msg="$1"
+    echo "FAIL: $msg" >&2
+    exit 1
+}
+pass() {
+    local msg="$1"
+    echo "  ok: $msg"
+    return 0
+}
+sid_of() {
+    local out="$1" sid
+    sid=$(grep -oP 'session \K\S+' <<< "$out" | head -1)
+    [[ -n "$sid" ]] || return 1
+    printf '%s\n' "$sid"
+}
+
+reset_target
+
+# --- 1. transactional run: mutations must NOT hit the target
+OUT=$($OVERLORD run -t "$TARGET" -- bash -c \
+  'echo changed > edit.txt; rm doomed.txt; echo new > created.txt; echo n2 > sub/also.txt')
+SID=$(sid_of "$OUT"); [[ -n "$SID" ]] || fail "no session id"
+grep -q original "$TARGET/edit.txt"  || fail "target mutated before commit (edit)"
+[[ -f "$TARGET/doomed.txt" ]]          || fail "target mutated before commit (delete)"
+[[ ! -f "$TARGET/created.txt" ]]       || fail "target mutated before commit (create)"
+pass "isolation"
+
+# --- 2. diff completeness
+DIFF=$($OVERLORD diff "$SID")
+grep -q 'modified.*edit.txt'  <<< "$DIFF" || fail "diff missed modify"
+grep -q 'deleted.*doomed.txt' <<< "$DIFF" || fail "diff missed delete"
+grep -q 'added.*created.txt'  <<< "$DIFF" || fail "diff missed add"
+grep -q 'sub/also.txt'        <<< "$DIFF" || fail "diff missed nested add"
+pass "diff"
+
+# --- 3. provenance: before/after hashes recorded
+LOG=$($OVERLORD log "$SID")
+grep -qP 'modified\s+edit.txt\s+[0-9a-f]{12} -> [0-9a-f]{12}' <<< "$LOG" || fail "provenance missing modify hashes"
+grep -qP 'deleted\s+doomed.txt\s+[0-9a-f]{12} -> -'           <<< "$LOG" || fail "provenance missing delete before-hash"
+pass "provenance"
+
+# --- 4. rollback leaves target byte-identical
+$OVERLORD rollback "$SID" > /dev/null
+grep -q original "$TARGET/edit.txt" && [[ -f "$TARGET/doomed.txt" ]] && [[ ! -f "$TARGET/created.txt" ]] \
+  || fail "rollback not clean"
+pass "rollback"
+
+# --- 5. commit applies exactly the recorded changes
+OUT=$($OVERLORD run -t "$TARGET" -- bash -c 'echo changed > edit.txt; rm doomed.txt; echo new > created.txt')
+SID=$(sid_of "$OUT")
+$OVERLORD commit "$SID" > /dev/null
+grep -q changed "$TARGET/edit.txt"        || fail "commit missed modify"
+[[ ! -f "$TARGET/doomed.txt" ]]             || fail "commit missed delete"
+grep -q new "$TARGET/created.txt"         || fail "commit missed create"
+grep -q original "$TARGET/keep.txt"       || fail "commit damaged untouched file"
+grep -q original "$TARGET/sub/nested.txt" || fail "commit damaged nested file"
+pass "commit"
+
+# --- 6. committed session refuses rollback
+$OVERLORD rollback "$SID" 2>/dev/null && fail "rollback allowed after commit" || true
+pass "commit finality"
+
+# --- 7. conflict detection: external drift refuses commit; --force overrides
+reset_target
+OUT=$($OVERLORD run -t "$TARGET" -- bash -c 'echo session-edit > edit.txt')
+SID=$(sid_of "$OUT")
+sleep 0.01; echo external-edit > "$TARGET/edit.txt"   # drift after snapshot
+$OVERLORD commit "$SID" 2>/dev/null && fail "commit ignored external drift" || true
+grep -q external-edit "$TARGET/edit.txt" || fail "refused commit still mutated target"
+$OVERLORD commit --force "$SID" > /dev/null || fail "--force commit failed"
+grep -q session-edit "$TARGET/edit.txt"  || fail "--force did not apply"
+pass "conflict detection"
+
+# --- 8. conflict detection: externally created file blocks session's add
+reset_target
+OUT=$($OVERLORD run -t "$TARGET" -- bash -c 'echo mine > race.txt')
+SID=$(sid_of "$OUT")
+echo theirs > "$TARGET/race.txt"
+$OVERLORD commit "$SID" 2>/dev/null && fail "commit clobbered externally created file" || true
+$OVERLORD rollback "$SID" > /dev/null
+pass "conflict on create"
+
+# --- 9. shell (non-interactive stdin drive)
+reset_target
+OUT=$(echo 'echo fromshell > shellfile.txt' | $OVERLORD shell -t "$TARGET" 2>/dev/null) || true
+SID=$(sid_of "$OUT"); [[ -n "$SID" ]] || fail "shell produced no session"
+$OVERLORD diff "$SID" | grep -q 'added.*shellfile.txt' || fail "shell session missed write"
+[[ ! -f "$TARGET/shellfile.txt" ]] || fail "shell wrote through to target"
+$OVERLORD rollback "$SID" > /dev/null
+pass "shell"
+
+# --- 10. syscall trace (only when strace is installed)
+if command -v strace > /dev/null; then
+    reset_target
+    OUT=$($OVERLORD run --trace -t "$TARGET" -- bash -c 'echo traced > t.txt')
+    SID=$(sid_of "$OUT")
+    [[ -s "$OVERLORD_HOME/sessions/$SID/syscalls.jsonl" ]] || fail "trace produced no syscall log"
+    grep -q '"write": true' "$OVERLORD_HOME/sessions/$SID/syscalls.jsonl" || fail "trace missed write syscalls"
+    $OVERLORD rollback "$SID" > /dev/null
+    pass "syscall trace"
+else
+    echo "  skip: syscall trace (strace not installed)"
+fi
+
+# --- 11. absolute-path containment (kernel backend only)
+if $OVERLORD doctor 2>/dev/null | grep -q 'kernel backend.*: available'; then
+    reset_target
+    OUT=$($OVERLORD run --backend kernel -t "$TARGET" -- bash -c "echo abs > $TARGET/abs.txt")
+    SID=$(sid_of "$OUT")
+    [[ ! -f "$TARGET/abs.txt" ]] || fail "kernel backend leaked absolute-path write"
+    $OVERLORD diff "$SID" | grep -q 'added.*abs.txt' || fail "kernel backend lost absolute-path write"
+    $OVERLORD rollback "$SID" > /dev/null
+    pass "absolute-path containment (kernel)"
+else
+    echo "  skip: containment test (kernel backend unavailable)"
+fi
+
+# --- 12. cleanup survives mode-000 dirs (kernel overlayfs creates work/work as 000)
+reset_target
+OUT=$($OVERLORD run -t "$TARGET" -- true)
+SID=$(sid_of "$OUT")
+mkdir -p "$OVERLORD_HOME/sessions/$SID/work/work"
+chmod 000 "$OVERLORD_HOME/sessions/$SID/work/work"
+$OVERLORD rollback "$SID" > /dev/null || fail "rollback died on mode-000 work dir"
+[[ ! -d "$OVERLORD_HOME/sessions/$SID" ]] || fail "session dir survived rollback"
+pass "mode-000 cleanup"
+
+# --- 13. timeout grant kills the process group
+reset_target
+if OUT=$($OVERLORD run --timeout 1 -t "$TARGET" -- sleep 30 2>/dev/null); then
+    fail "timeout did not produce nonzero exit"
+fi
+SID=$($OVERLORD sessions | grep timed-out | tail -1 | cut -d' ' -f1)
+[[ -n "$SID" ]] || fail "timed-out session not recorded"
+$OVERLORD rollback "$SID" > /dev/null
+pass "timeout grant"
+
+# --- 14. manifest file drives grants
+reset_target
+echo '{"timeout": 1}' > "$WORK/cap.json"
+if $OVERLORD run --manifest "$WORK/cap.json" -t "$TARGET" -- sleep 30 > /dev/null 2>&1; then
+    fail "manifest timeout not enforced"
+fi
+$OVERLORD rollback "$($OVERLORD sessions | grep timed-out | tail -1 | cut -d' ' -f1)" > /dev/null
+pass "capability manifest"
+
+# --- 15. arbitration: pending session blocks new runs; --stack overrides
+reset_target
+OUT=$($OVERLORD run -t "$TARGET" -- bash -c 'echo a > a.txt'); SIDA=$(sid_of "$OUT")
+if $OVERLORD run -t "$TARGET" -- true > /dev/null 2>&1; then
+    fail "second run allowed with pending session"
+fi
+OUT=$($OVERLORD run --stack -t "$TARGET" -- true); SIDB=$(sid_of "$OUT")
+$OVERLORD rollback "$SIDA" > /dev/null; $OVERLORD rollback "$SIDB" > /dev/null
+pass "arbitration"
+
+# --- 16. three-way merge: non-overlapping drift merges; overlapping refuses
+reset_target
+printf 'l1\nl2\nl3\n' > "$TARGET/merge.txt"
+OUT=$($OVERLORD run --merge-base -t "$TARGET" -- bash -c "sed -i 's/l1/session1/' merge.txt")
+SID=$(sid_of "$OUT")
+sleep 0.01; sed -i 's/l3/external3/' "$TARGET/merge.txt"
+$OVERLORD commit "$SID" 2>/dev/null && fail "drift committed without merge" || true
+$OVERLORD commit --merge "$SID" > /dev/null || fail "clean three-way merge refused"
+grep -q session1 "$TARGET/merge.txt" && grep -q external3 "$TARGET/merge.txt" \
+  || fail "merge lost an edit"
+# overlapping edit must refuse even with --merge
+printf 'x1\nx2\n' > "$TARGET/clash.txt"
+OUT=$($OVERLORD run --merge-base -t "$TARGET" -- bash -c "sed -i 's/x1/session/' clash.txt")
+SID=$(sid_of "$OUT")
+sleep 0.01; sed -i 's/x1/external/' "$TARGET/clash.txt"
+$OVERLORD commit --merge "$SID" 2>/dev/null && fail "overlapping edit merged silently" || true
+$OVERLORD rollback "$SID" > /dev/null
+pass "three-way merge"
+
+KERNEL_OK=false
+if $OVERLORD doctor 2>/dev/null | grep -q 'kernel backend.*: available'; then KERNEL_OK=true; fi
+
+# --- 17. jail grant: rest of the filesystem does not exist (kernel only)
+if $KERNEL_OK; then
+    reset_target
+    OUT=$($OVERLORD run --jail -t "$TARGET" -- bash -c \
+      '[ ! -d /home ] && [ ! -d /mnt ] && echo sealed > verdict.txt; ls /usr > /dev/null && echo tools >> verdict.txt')
+    SID=$(sid_of "$OUT")
+    $OVERLORD diff "$SID" | grep -q 'added.*verdict.txt' || fail "jail session lost its write"
+    $OVERLORD commit "$SID" > /dev/null
+    grep -q sealed "$TARGET/verdict.txt" || fail "jail did not seal the filesystem"
+    grep -q tools "$TARGET/verdict.txt"  || fail "jail broke system dir access"
+    pass "jail grant"
+else
+    echo "  skip: jail grant (kernel backend unavailable)"
+fi
+
+# --- 18. net:none grant: even loopback to host services is unreachable (kernel only)
+if $KERNEL_OK; then
+    reset_target
+    python3 -m http.server 8377 --bind 127.0.0.1 --directory "$TARGET" > /dev/null 2>&1 &
+    HTTP_PID=$!
+    sleep 0.7
+    OUT=$($OVERLORD run -t "$TARGET" -- bash -c \
+      'if (echo > /dev/tcp/127.0.0.1/8377) 2>/dev/null; then echo open > net.txt; else echo closed > net.txt; fi')
+    SID=$(sid_of "$OUT")
+    grep -q '"after' "$OVERLORD_HOME/sessions/$SID/provenance.jsonl" || true
+    $OVERLORD commit "$SID" > /dev/null
+    grep -q open "$TARGET/net.txt" || fail "host-net control failed (server unreachable?)"
+    OUT=$($OVERLORD run --net none -t "$TARGET" -- bash -c \
+      'if (echo > /dev/tcp/127.0.0.1/8377) 2>/dev/null; then echo open > net.txt; else echo closed > net.txt; fi')
+    SID=$(sid_of "$OUT")
+    $OVERLORD commit --force "$SID" > /dev/null
+    kill "$HTTP_PID" 2>/dev/null || true
+    grep -q closed "$TARGET/net.txt" || fail "net:none did not isolate the network"
+    pass "net:none grant"
+else
+    echo "  skip: net:none grant (kernel backend unavailable)"
+fi
+
+# --- 19. jail + strace combo: trace lands, records stay sealed (kernel only)
+if $KERNEL_OK && command -v strace > /dev/null; then
+    reset_target
+    OUT=$($OVERLORD run --jail --trace -t "$TARGET" -- bash -c \
+      'echo t > t.txt; ls /.overlord/manifest.json 2>/dev/null && echo BOOKS || echo SEALED')
+    SID=$(sid_of "$OUT")
+    [[ -s "$OVERLORD_HOME/sessions/$SID/syscalls.jsonl" ]] || fail "jail+trace produced no syscall log"
+    grep -q BOOKS <<< "$OUT" && fail "session records visible in jail+trace mode" || true
+    $OVERLORD rollback "$SID" > /dev/null
+    pass "jail + trace (records sealed)"
+else
+    echo "  skip: jail+trace combo"
+fi
+
+# --- 20. sid_of must not mask a missing session id (callers build paths from it)
+sid_of "command completed" > /dev/null && fail "sid_of returned success on a missing id" || true
+pass "sid_of refuses a missing id"
+
+# --- 21. a whiteout that names its own tree root can never reach apply_upper
+# (kernel overlayfs never names whiteouts .wh.*, so there `.wh.` is a plain file)
+reset_target
+OUT=$($OVERLORD run -t "$TARGET" -- bash -c 'touch .wh.')
+SID=$(sid_of "$OUT")
+BACKEND=$(grep -o '"backend": "[a-z]*"' "$OVERLORD_HOME/sessions/$SID/meta.json" | cut -d'"' -f4)
+if [[ "$BACKEND" == "kernel" ]]; then
+    $OVERLORD diff "$SID" | grep -q 'added *\.wh\.$' || fail "kernel: .wh. not treated as a plain file"
+    $OVERLORD diff "$SID" | grep -q 'invalid-whiteout' && fail "kernel: plain file misread as whiteout" || true
+    $OVERLORD commit "$SID" > /dev/null || fail "kernel: commit of a file named .wh. failed"
+    [[ -f "$TARGET/.wh." && -f "$TARGET/keep.txt" ]] || fail "kernel: .wh. commit lost data"
+    pass "kernel: a file named .wh. is a file; target intact"
+else
+    $OVERLORD diff "$SID" | grep -q 'invalid-whiteout' || fail "root-naming whiteout not recorded in diff"
+    R=$($OVERLORD commit --force "$SID" 2>&1) && fail "commit --force accepted a root-naming whiteout" || true
+    grep -q "names its own tree root" <<< "$R" || fail "wrong refusal for root-naming whiteout: $R"
+    [[ -f "$TARGET/keep.txt" ]] || fail "target destroyed by root-naming whiteout"
+    $OVERLORD rollback "$SID" > /dev/null || fail "root-naming whiteout wedged the session"
+    pass "root-naming whiteout: refused, unforceable, target intact, rollback works"
+fi
+
+# --- 22. replay never writes through a symlink that drifted into the tree
+reset_target
+OUTSIDE="$WORK/outside"; rm -rf "$OUTSIDE"; mkdir -p "$OUTSIDE"
+OUT=$($OVERLORD run -t "$TARGET" -- bash -c 'echo payload > sub/file')
+SID=$(sid_of "$OUT")
+rm -rf "$TARGET/sub"; ln -s "$OUTSIDE" "$TARGET/sub"     # drift: sub now points out of the tree
+R=$($OVERLORD commit "$SID" 2>&1) && fail "commit wrote through a drifted symlink" || true
+grep -q "via a symlink" <<< "$R" || fail "symlink drift not named in refusal: $R"
+$OVERLORD commit --force "$SID" > /dev/null 2>&1 && fail "--force wrote through a drifted symlink" || true
+[[ ! -e "$OUTSIDE/file" ]] || fail "replay escaped the tree into $OUTSIDE"
+$OVERLORD rollback "$SID" > /dev/null
+pass "symlink drift: refused, unforceable, nothing written outside the tree"
+
+# --- 23. an added directory must not silently replace an external file
+reset_target
+OUT=$($OVERLORD run -t "$TARGET" -- bash -c 'mkdir reports; echo r > reports/r.txt')
+SID=$(sid_of "$OUT")
+echo external > "$TARGET/reports"
+R=$($OVERLORD commit "$SID" 2>&1) && fail "added dir replaced an external file" || true
+grep -q "created-externally" <<< "$R" || fail "external file at added-dir path not reported: $R"
+grep -q external "$TARGET/reports" || fail "external file lost"
+$OVERLORD rollback "$SID" > /dev/null
+pass "added dir vs external file: refused, file intact"
+
+# --- 24. replacing a directory must not delete descendants that appeared after the snapshot
+reset_target
+OUT=$($OVERLORD run -t "$TARGET" -- bash -c 'rm -rf sub; mkdir sub; echo fresh > sub/fresh')
+SID=$(sid_of "$OUT")
+echo new > "$TARGET/sub/new"
+R=$($OVERLORD commit "$SID" 2>&1) && fail "replaced dir deleted an external descendant" || true
+grep -q "appeared-after-snapshot" <<< "$R" || fail "external descendant not reported: $R"
+[[ -f "$TARGET/sub/new" ]] || fail "external descendant deleted"
+$OVERLORD rollback "$SID" > /dev/null
+pass "replaced dir vs external descendant: refused, file intact"
+
+# --- 25. a recorder that fails to start must take the workload down with it (kernel only)
+if $KERNEL_OK && ! command -v bpftrace > /dev/null; then
+    reset_target
+    BEACON="$WORK/beacon"; rm -f "$BEACON"
+    HOLDERS_BEFORE=$(ps -eo cmd | grep -c '[u]nshare --map-root-user' || true)
+    RECORDS_BEFORE=$(ls "$OVERLORD_HOME/sessions" 2>/dev/null | wc -l)
+    R=$($OVERLORD run --trace ebpf -t "$TARGET" -- bash -c "sleep 1; touch $BEACON" 2>&1) && fail "ebpf run succeeded without a recorder" || true
+    grep -q bpftrace <<< "$R" || fail "ebpf preflight gave no useful error: $R"
+    sleep 2
+    [[ ! -e "$BEACON" ]] || fail "workload ran on after the recorder failed"
+    HOLDERS_AFTER=$(ps -eo cmd | grep -c '[u]nshare --map-root-user' || true)
+    [[ "$HOLDERS_AFTER" -le "$HOLDERS_BEFORE" ]] || fail "recorder failure leaked a holder process"
+    # and the failed launch must not have left a session behind: the next
+    # plain run on the same target has to open without --stack
+    RECORDS_AFTER=$(ls "$OVERLORD_HOME/sessions" 2>/dev/null | wc -l)
+    [[ "$RECORDS_AFTER" -eq "$RECORDS_BEFORE" ]] || fail "failed launch left a session record"
+    OUT=$($OVERLORD run -t "$TARGET" -- true) || fail "failed launch left the target blocked"
+    $OVERLORD rollback "$(sid_of "$OUT")" > /dev/null
+    pass "recorder failure kills the workload and leaves no session"
+else
+    echo "  skip: recorder-failure test (needs kernel backend and no bpftrace)"
+fi
+
+# --- 26. kernel: a file named .wh.<existing> must not delete <existing> on commit
+if $KERNEL_OK; then
+    reset_target
+    OUT=$($OVERLORD run --backend kernel -t "$TARGET" -- bash -c 'touch .wh.keep.txt')
+    SID=$(sid_of "$OUT")
+    $OVERLORD diff "$SID" | grep -q 'deleted *keep.txt' && fail ".wh.keep.txt misread as a whiteout of keep.txt" || true
+    $OVERLORD diff "$SID" | grep -q 'added *\.wh\.keep\.txt' || fail ".wh.keep.txt not recorded as an added file"
+    $OVERLORD commit "$SID" > /dev/null
+    [[ -f "$TARGET/keep.txt" ]] || fail "commit deleted keep.txt because of a .wh.-named file"
+    [[ -f "$TARGET/.wh.keep.txt" ]] || fail ".wh.keep.txt was not applied"
+    pass "kernel: .wh.<name> is a file, not a whiteout of <name>"
+else
+    echo "  skip: .wh.<name> test (kernel backend unavailable)"
+fi
+
+echo "PASS: all smoke assertions"
