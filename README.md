@@ -33,12 +33,25 @@ The trained checkpoints (`sable/docker/checkpoints/fusion.pt`, `temporal.pt`, op
 
 | variable | effect |
 |---|---|
-| `ANTHROPIC_API_KEY` | SABLE's analyst runs on Claude; the console's LLM planner becomes available |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | optional: a model key from the environment instead of Settings (see Models) |
+| `GPU` / `SABLE_GPU` | `make up GPU=0` forces CPU; `SABLE_GPU` picks the card (nvidia-smi index, default 0) |
 | `SABLE_MODE` | `auto` (default), `real`, `stub` |
 | `CONSOLE_POLICY` | path to a policy file (default: the shipped default-deny) |
 | `CONSOLE_DISABLE_ACTIONS` | comma-separated catalog actions to refuse |
 | `CONSOLE_TOKEN` | when set, every mutating console route needs `Authorization: Bearer <token>`; the UI takes it from `#token=` once and keeps it in localStorage |
 | `SABLE_TOKEN` | when set, SABLE's own state-changing routes need `X-SABLE-Token`; the live monitor sends it |
+
+## Models
+
+One model does the language work: the analyst (operator chat about a finding) and the LLM planner (the Re-plan button). Pick it in the console under **Settings**: Anthropic (Claude) or OpenAI (GPT), the model from the provider's live list, and the API key. The key is write-only. It goes into OVERLORD's key store (`/data/keys.json`, mode 600, on the `console-data` volume, so it survives rebuilds), takes effect on the next call, and is never shown again. **Test** makes one tiny call on the saved choice. The strip's **Model** line shows what is in use and says `no key` when there isn't one.
+
+Every model call goes through OVERLORD and is audited (`model.complete`, with prompt and output hashes). The analyst has no tools: the console hands it the finding, the plan, every receipt and SABLE's current reading, and it answers from those alone. The template planner needs no model and is always there (Plan (template)).
+
+Environment, all optional: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` win over a stored key (Settings says so); `CONSOLE_LLM_PROVIDER` / `CONSOLE_LLM_MODEL` only seed the choice before anything is saved.
+
+## GPU
+
+`make up` passes the GPU through when the host has an NVIDIA driver (`nvidia-smi -L` works): it adds `docker-compose.gpu.yml`, which builds the image with CUDA torch (cu128, the first with RTX 50xx kernels) and reserves device `SABLE_GPU` (default `0`). SABLE's engine picks CUDA by itself; the strip shows `cuda`. `make up GPU=0` forces CPU. Needs the NVIDIA container toolkit on the host (`docker run --rm --gpus all ubuntu nvidia-smi` must work).
 
 ## Developing
 

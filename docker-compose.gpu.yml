@@ -1,0 +1,20 @@
+# GPU override: SABLE's engine on an NVIDIA card. The Makefile adds this file
+# whenever the host has nvidia-smi (GPU=0 turns it off); by hand:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+# Needs the NVIDIA container toolkit on the host. The engine picks CUDA on its
+# own when torch sees a device (sable/docker/sable_engine.py).
+services:
+  console:
+    build:
+      args:
+        # cu128 is the first CUDA build with Blackwell (RTX 50xx, sm_120) kernels
+        TORCH_INDEX: ${TORCH_INDEX:-https://download.pytorch.org/whl/cu128}
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${SABLE_GPU:-0}"]     # nvidia-smi index; 0 = the RTX 5090 on sable
+              capabilities: [gpu]
