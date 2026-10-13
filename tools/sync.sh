@@ -9,7 +9,8 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 sync_one() {  # sync_one <name> <url> <ref>
     git clone -q --depth 1 --branch "$3" "$2" "$tmp/$1"
     rsync -a --delete --exclude=.git --exclude=node_modules --exclude=dist --exclude=__pycache__ --exclude=.run \
-          --exclude='docker/checkpoints' --exclude='*.pt' "$tmp/$1/" "$HERE/$1/"
+          --exclude='docker/checkpoints' --exclude='pillar1/checkpoints' --exclude='*.pt' \
+          "$tmp/$1/" "$HERE/$1/" >&2    # rsync's notices must not land in the lock
     echo "$1  $2  $(git -C "$tmp/$1" rev-parse HEAD)  $(git -C "$tmp/$1" log -1 --format=%cs)"
 }
 {

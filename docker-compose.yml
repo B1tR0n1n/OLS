@@ -28,6 +28,15 @@ services:
       CONSOLE_DISABLE_ACTIONS: ${CONSOLE_DISABLE_ACTIONS:-}
       CONSOLE_TOKEN: ${CONSOLE_TOKEN:-}
       SABLE_TOKEN: ${SABLE_TOKEN:-}
+      # findings + the receipt chain live on the volume with OVERLORD's audit,
+      # not in the container's writable layer (a rebuild used to wipe them)
+      CONSOLE_DATA: /data/console
+      # the model (see README "Models"): normally chosen in the console under
+      # Settings, key stored in /data; these only seed the first choice, and an
+      # API key set here wins over a stored one
+      CONSOLE_LLM_PROVIDER: ${CONSOLE_LLM_PROVIDER:-}
+      CONSOLE_LLM_MODEL: ${CONSOLE_LLM_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${OLS_DIR}:${OLS_DIR}
@@ -38,6 +47,11 @@ services:
       - SYS_ADMIN
     security_opt:
       - apparmor:unconfined
+      # OVERLORD's kernel backend (picked here: root + SYS_ADMIN) builds its
+      # jail with a fresh /proc; Docker masks /proc paths by default and the
+      # mount is refused, so every jailed command failed (escape/limits/redteam
+      # suites). No real widening: this container already holds the docker socket.
+      - systempaths=unconfined
     ports:
       - "7780:7780"        # the console
       - "8080:8080"        # SABLE's own API / dashboard

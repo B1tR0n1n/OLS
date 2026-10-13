@@ -18,6 +18,14 @@ export OVERLORD_HOME="${OVERLORD_HOME:-/data}"
 mkdir -p "$OVERLORD_HOME"
 [[ -n "${ANTHROPIC_API_KEY:-}" ]] && export SABLE_LLM=claude
 
+# GPU mode: the NVIDIA runtime lays a tmpfs over /proc/driver/nvidia. A covered
+# path under /proc makes the kernel refuse a fresh proc mount in a user
+# namespace (mount_too_revealing), so every OVERLORD jail failed with
+# "mount proc: Operation not permitted". CUDA does not need the overlay.
+if mountpoint -q /proc/driver/nvidia 2>/dev/null; then
+    umount -R /proc/driver/nvidia && echo "== GPU: dropped the /proc/driver/nvidia overlay (OVERLORD jails need a clean /proc)"
+fi
+
 # the code that runs is the mounted checkout when present (so edits on the
 # host are live), else the image's copy
 cd "$SABLE_DIR" 2>/dev/null || cd "$APP"

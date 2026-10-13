@@ -12,7 +12,9 @@
 # at the same path so the lab's bind mounts resolve host-side). Keep the checkout
 # on the Linux filesystem (~/…), not /mnt/c.
 ROOT   := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-COMPOSE := OLS_DIR=$(ROOT) docker compose -f $(ROOT)/docker-compose.yml
+# the GPU override rides along whenever the host has an NVIDIA driver (GPU=0 to skip)
+GPU    ?= $(shell command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1 && echo 1 || echo 0)
+COMPOSE := OLS_DIR=$(ROOT) docker compose -f $(ROOT)/docker-compose.yml $(if $(filter 1,$(GPU)),-f $(ROOT)/docker-compose.gpu.yml)
 FAULTS := stop_service corrupt_config kill_primary poison_dns heal_all
 
 .PHONY: help up down build logs status fault test sync config
@@ -25,7 +27,7 @@ build:
 
 up:
 	$(COMPOSE) up -d --build --wait --wait-timeout 300
-	@echo; echo "Up.  console: http://127.0.0.1:7780   SABLE: http://127.0.0.1:8080   (make fault F=stop_service)"
+	@echo; echo "Up.  console: http://127.0.0.1:7780   SABLE: http://127.0.0.1:8080   (make fault F=stop_service)$(if $(filter 1,$(GPU)),   GPU: on,)"
 
 down:
 	$(COMPOSE) down -v --remove-orphans
